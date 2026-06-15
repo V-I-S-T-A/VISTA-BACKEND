@@ -1,0 +1,49 @@
+# --- Python / Django Essentials ---
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+env/
+venv/
+ENV/
+.env
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+
+# --- Databases ---
+# We keep the schema (migrations), but not the local data
+*.sqlite3
+db.sqlite3
+
+# --- Django Specifics ---
+*.log
+local_settings.py
+db.sqlite3-journal
+media/
+static/
+# Note: Usually you want to keep 'static/' if it contains source assets, 
+# but ignore it if it's just the 'staticfiles' output from collectstatic.
+staticfiles/
+
+# --- Testing & Coverage ---
+.tox/
+.coverage
+.cache
+nosetests.xml
+coverage.xml
+htmlcov/
+.pytest_cache/
+
+# --- OS Specific ---
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+
+# --- IDEs ---
+.vscode/
+.idea/
+*.swp
+*.swo
