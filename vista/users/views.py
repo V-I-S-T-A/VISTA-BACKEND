@@ -4,6 +4,8 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import filters
 
 from .models import User
 from .serializers import (
@@ -14,11 +16,19 @@ from .serializers import (
     LoginSerializer,
 )
 from .permissions import IsAdmin, IsSelfOrAdmin
+from .filters import UserFilter
+from vista.paginations import StandardResultsPagination
 
 
 class UserViewSet(viewsets.ModelViewSet):
-    queryset = User.objects.all().order_by("-created_at")
+    queryset = User.objects.all().select_related("org_id")
     lookup_field = "user_id"
+    pagination_class = StandardResultsPagination
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_class = UserFilter
+    search_fields = ["full_name", "email"]
+    ordering_fields = ["full_name", "email", "role", "created_at"]
+    ordering = ["-created_at"]
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -38,7 +48,7 @@ class UserViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         instance.is_active = False
-        instance.save()
+        instance.save(update_fields=["is_active"])
 
 
 class LoginView(APIView):

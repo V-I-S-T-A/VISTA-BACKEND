@@ -30,10 +30,10 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     user_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     org_id = models.ForeignKey(Organization, on_delete=models.SET_NULL, null=True, db_column="org_id")
-    full_name = models.CharField(max_length=255)
+    full_name = models.CharField(max_length=255, db_index=True)
     email = models.CharField(max_length=255, unique=True)
-    role = models.CharField(max_length=100, choices=ROLE_CHOICES, default="student")
-    is_active = models.BooleanField(default=True)
+    role = models.CharField(max_length=100, choices=ROLE_CHOICES, default="student", db_index=True)
+    is_active = models.BooleanField(default=True, db_index=True)
     is_staff = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -45,6 +45,11 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     class Meta:
         db_table = "tbl_Users"
+        indexes = [
+            models.Index(fields=["role", "is_active"], name="user_role_active_idx"),
+            models.Index(fields=["-created_at"], name="user_created_at_idx"),
+        ]
+        ordering = ["-created_at"]
 
     def __str__(self):
         return self.email
