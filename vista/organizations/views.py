@@ -5,7 +5,7 @@ from .models import Organization
 from .serializers import OrganizationSerializer, OrganizationListSerializer
 from users.permissions import IsAdmin
 from .filters import OrganizationFilter
-from vista.paginations import StandardResultsPagination
+from vista.pagination import StandardResultsPagination
 from django_filters.rest_framework import DjangoFilterBackend
 
 

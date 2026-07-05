@@ -17,7 +17,7 @@ from .serializers import (
 )
 from .permissions import IsAdmin, IsSelfOrAdmin
 from .filters import UserFilter
-from vista.paginations import StandardResultsPagination
+from vista.pagination import StandardResultsPagination
 
 
 class UserViewSet(viewsets.ModelViewSet):

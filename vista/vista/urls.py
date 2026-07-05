@@ -21,4 +21,11 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path("api/", include("users.urls")),
     path("api/", include("organizations.urls")),
+    path("api/", include("academic_years.urls")),
+    path("api/", include("categories.urls")),
+    path("api/", include("document_types.urls")),
+    path("api/", include("documents.urls")),
+    path("api/", include("submissions.urls")),
+    path("api/", include("review_logs.urls")),
+    path("api/", include("audit_logs.urls")),
 ]
