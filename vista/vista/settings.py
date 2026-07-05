@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     'audit_logs',
     'review_logs',
     'documents',
+    'integrations',
     'django.contrib.postgres',
     "rest_framework",
     "rest_framework_simplejwt",
@@ -67,7 +68,7 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
     ),
-    "DEFAULT_PAGINATION_CLASS": "vista.paginations.StandardResultsPagination",
+    "DEFAULT_PAGINATION_CLASS": "vista.pagination.StandardResultsPagination",
     "PAGE_SIZE": 20,
     "DEFAULT_FILTER_BACKENDS": [
         "django_filters.rest_framework.DjangoFilterBackend",
