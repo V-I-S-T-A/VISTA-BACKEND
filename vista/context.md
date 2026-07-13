@@ -4,7 +4,7 @@
 
 **VISTA** is a Django REST Framework backend for an **Office of Student Affairs (OSA)** document submission and review system. Student organizations submit documents (reports, proposals, etc.) to the OSA. Staff review them through a workflow, and approved documents are automatically uploaded to a **centralized OSA Google Drive** folder via a service account (not per-staff OAuth).
 
-**Stack:** Django 6.0.6 · PostgreSQL · DRF 3.17.1 · SimpleJWT · Celery + Redis · Google Drive API v3 · ReportLab 4.5.1
+**Stack:** Django 6.0.6 · PostgreSQL · DRF 3.17.1 · SimpleJWT · Celery + Redis · Google Drive API v3 · ReportLab 4.5.1 · Cloudinary
 
 ---
 
@@ -84,18 +84,26 @@ Extends `AbstractBaseUser + PermissionsMixin` (required for JWT).
 ```python
 user_id         UUIDField (PK)
 org_id          ForeignKey(Organization, SET_NULL)
-full_name       CharField(255, db_index=True)
+first_name      CharField(150, db_index=True)
+last_name       CharField(150, db_index=True)
 email           CharField(255, unique=True)       # USERNAME_FIELD
 role            CharField choices: student|staff|admin (db_index=True)
+image_url       URLField(500, blank=True, null=True)
 is_active       BooleanField(db_index=True)
 is_staff        BooleanField
 created_at      DateTimeField(auto_now_add=True)
 updated_at      DateTimeField(auto_now=True)
 ```
-Custom `UserManager` with `create_user()` and `create_superuser()`.
-Indexes: composite `(role, is_active)`, `(-created_at)`
+Custom `UserManager` with `create_user()` and `create_superuser()`, both taking `first_name`/`last_name` instead of a single `full_name`.
+`get_full_name()` returns `"{first_name} {last_name}"`; `get_short_name()` returns `first_name`.
+Indexes: composite `(role, is_active)`, `(-created_at)`, composite `(last_name, first_name)`
 `AUTH_USER_MODEL = "users.User"`
+`REQUIRED_FIELDS = ["first_name", "last_name"]`
 `password_hash` from the original ERD was removed — `AbstractBaseUser` handles hashing internally via `set_password()` / `check_password()`.
+
+**`image_url`** stores the Cloudinary `secure_url` returned on upload — see "Avatar Upload (Cloudinary)" below. It is never set directly by API clients; it's derived server-side from an uploaded `image` file.
+
+**Note:** the model was originally a single `full_name` field and was split into `first_name`/`last_name`. If a production database already has rows under the old schema, this requires a data migration to backfill `first_name`/`last_name` from the existing `full_name` values before dropping the old column — a plain `makemigrations`/`migrate` will not do this safely. See Open Questions.
 
 ---
 
@@ -258,7 +266,7 @@ POST  /api/auth/login/              → returns access + refresh tokens + user d
 POST  /api/auth/logout/             → blacklists refresh token
 POST  /api/auth/token/refresh/      → rotates access token
 GET   /api/auth/me/                 → own profile
-PATCH /api/auth/me/                 → update own profile
+PATCH /api/auth/me/                 → update own profile (supports multipart avatar upload — see below)
 POST  /api/auth/change-password/
 ```
 
@@ -289,11 +297,14 @@ Response shape:
 ```
 Set globally via `REST_FRAMEWORK["DEFAULT_PAGINATION_CLASS"]` pointing to `vista.pagination.StandardResultsPagination`.
 
+### Parsers
+`UserViewSet` and `MeView` use `parser_classes = [MultiPartParser, FormParser, JSONParser]` so both plain JSON updates and multipart avatar-image uploads work through the same endpoints. All other ViewSets remain on DRF's default JSON-only parsing.
+
 ### Filtering
 Uses `django-filter` (`DjangoFilterBackend`) + DRF's `SearchFilter` + `OrderingFilter` on every ViewSet.
 Each app has its own `filters.py` with a `FilterSet` class.
 - `DjangoFilterBackend` → exact-match filters (role, status, is_active, FK UUID lookups, date ranges)
-- `SearchFilter` → free-text search (`full_name`, `title`, `name`, etc.)
+- `SearchFilter` → free-text search (`first_name`, `last_name`, `title`, `name`, etc.)
 - `OrderingFilter` → client-controlled sort
 
 ### Queryset Scoping (row-level security)
@@ -325,9 +336,9 @@ Used on all list queries involving FKs to avoid N+1:
 ```
 # Users
 GET    /api/users/                             admin only
-POST   /api/users/                             admin only (creates staff or student)
+POST   /api/users/                             admin only (creates staff or student; multipart if uploading image)
 GET    /api/users/{user_id}/                   self or admin
-PATCH  /api/users/{user_id}/                   self or admin
+PATCH  /api/users/{user_id}/                   self or admin (multipart if uploading image)
 DELETE /api/users/{user_id}/                   admin only (soft-delete)
 
 # Organizations
@@ -444,6 +455,21 @@ if not has_date_filter:
 3. Demotes all existing `is_current=True` docs to `is_current=False`
 4. Creates new document with `is_current=True`
 
+### Avatar Upload (Cloudinary)
+`users.models.User.image_url` (`URLField`) stores a Cloudinary `secure_url`. Both `UserCreateSerializer` and `UserUpdateSerializer` (and `MeView.patch`, which reuses `UserUpdateSerializer`) accept a write-only `image` file field:
+```python
+image = serializers.ImageField(write_only=True, required=False, allow_null=True)
+```
+On `create()`/`update()`, if `image` is present:
+```python
+upload_result = cloudinary.uploader.upload(image, folder="vista/users")
+user.image_url = upload_result["secure_url"]
+user.save(update_fields=["image_url"])
+```
+No transformation/crop/resize parameters are passed to `cloudinary.uploader.upload()`, so the image is stored at its original uploaded resolution and file size — nothing is downscaled or cropped server-side.
+`image_url` is read-only in both serializers; clients cannot set it directly, only via the `image` upload field.
+Requests that include `image` must use `multipart/form-data`; JSON-only requests (no image) continue to work unchanged — see "Parsers" above.
+
 ### PDF Export (`submissions/pdf_generator.py`)
 Two public functions used by `SubmissionViewSet` export actions:
 
@@ -498,6 +524,7 @@ sync_submission_to_drive.delay(
 "rest_framework_simplejwt.token_blacklist",
 "django_filters",
 "corsheaders",
+"cloudinary",
 "users",
 "organizations",
 "academic_years",
@@ -521,6 +548,26 @@ sync_submission_to_drive.delay(
 }
 ```
 
+### Cloudinary Configuration
+`python-decouple`'s `config()` reads `.env` directly — it does **not** populate `os.environ`, so the `cloudinary` package's automatic `CLOUDINARY_URL` env-var detection won't pick anything up on its own. `cloudinary.config()` must be called explicitly at startup in `settings.py`:
+```python
+import cloudinary
+
+cloudinary.config(
+    cloud_name=config('CLOUDINARY_CLOUD_NAME'),
+    api_key=config('CLOUDINARY_API_KEY'),
+    api_secret=config('CLOUDINARY_API_SECRET'),
+    secure=True,
+)
+```
+
+### Upload Size Limits
+Django's defaults (`DATA_UPLOAD_MAX_MEMORY_SIZE` / `FILE_UPLOAD_MAX_MEMORY_SIZE`, 2.5 MB each) are too small for unresized avatar uploads and must be raised in `settings.py`, or large images fail with a bare `400 Bad Request` (raised as `RequestDataTooBig` before the view/serializer ever runs):
+```python
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024   # 10 MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024   # 10 MB
+```
+
 ### Required .env Variables
 ```
 # Django
@@ -537,6 +584,11 @@ GOOGLE_OAUTH_CLIENT_ID=
 GOOGLE_OAUTH_CLIENT_SECRET=
 GOOGLE_OAUTH_REDIRECT_URI=
 DRIVE_TOKEN_ENCRYPTION_KEY=          # generate: Fernet.generate_key().decode()
+
+# Cloudinary
+CLOUDINARY_CLOUD_NAME=
+CLOUDINARY_API_KEY=
+CLOUDINARY_API_SECRET=
 
 # Celery
 CELERY_BROKER_URL=redis://localhost:6379/0
@@ -602,6 +654,9 @@ requests==2.32.3
 # PDF Generation
 reportlab==4.5.1
 
+# Image Hosting
+cloudinary==1.41.0
+
 # Dev / Type Stubs (editor only)
 google-api-python-client-stubs==1.37.0
 ```
@@ -631,6 +686,12 @@ Both use hard delete. `Submission.academic_year_id` is `SET_NULL` — deleting a
 
 ### 4. Audit Log Wiring (not yet done)
 `audit_logs/utils.py` helpers exist but have not yet been wired into the other apps' ViewSets. The next step is adding `perform_create()`, `perform_update()`, `perform_destroy()` overrides to each ViewSet and calling the appropriate util function.
+
+### 5. `full_name` → `first_name`/`last_name` Migration Path
+The `User` model's `full_name` field was split into `first_name`/`last_name`. If any environment already has rows written under the old single-field schema, a straight `makemigrations`/`migrate` will not populate the new columns correctly — a data migration is needed to backfill `first_name`/`last_name` from the existing `full_name` values (e.g. splitting on the first space) before the old column is dropped.
+
+### 6. HEIC/HEIF Avatar Uploads
+Pillow (used internally by DRF's `ImageField` validation) does not decode HEIC/HEIF out of the box — the default format for photos taken on iPhones. Uploads in that format currently fail validation with "Upload a valid image." Either install and register `pillow-heif` (`register_heif_opener()`), or restrict the frontend's file picker to formats Pillow already supports.
 
 ---
 
@@ -673,3 +734,7 @@ celery -A vista worker -l info
 - ReportLab 5.0.0 was released June 18, 2026 but pinned to `4.5.1` (last stable before major version bump) — upgrade to 5.x only after confirming no breaking Platypus API changes
 - Export actions (`export_list`, `export_detail`) are registered in `get_permissions()` under `IsAdminOrStaff` — students cannot export
 - PDF export date params use plain `YYYY-MM-DD` format (`date_from`, `date_to`) mapped to `submitted_at__date__gte/lte`, separate from the ISO datetime `submitted_after`/`submitted_before` filter params used by the standard list API
+- `User.full_name` was replaced with separate `first_name`/`last_name` fields — this touches the model, `UserManager`, `USERNAME_FIELD`/`REQUIRED_FIELDS`, both serializers, `UserAdmin`, and `UserViewSet`'s `search_fields`/`ordering_fields`
+- `cloudinary.config()` must run explicitly at Django startup (in `settings.py`) — `python-decouple`'s `config()` reads `.env` but does not populate `os.environ`, so Cloudinary's own automatic `CLOUDINARY_URL` env-var pickup silently does nothing here; omitting the explicit `cloudinary.config()` call surfaces at upload time as `ValueError: Must supply api_key`
+- `cloudinary.uploader.upload()` is called with no transformation/crop/resize options anywhere in the codebase — this is intentional, avatars are stored at their original uploaded size
+- `DATA_UPLOAD_MAX_MEMORY_SIZE` / `FILE_UPLOAD_MAX_MEMORY_SIZE` were raised from Django's 2.5 MB default to accommodate unresized avatar uploads — a plain `400 Bad Request` with no JSON body (vs. a serializer validation error) on an image upload usually means these are still at the default

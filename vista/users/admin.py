@@ -5,18 +5,18 @@ from .models import User
 
 class UserAdmin(BaseUserAdmin):
     model = User
-    list_display = ("email", "full_name", "role", "is_active", "is_staff")
+    list_display = ("email", "first_name", "last_name", "role", "is_active", "is_staff")
     list_filter = ("role", "is_active", "is_staff")
-    search_fields = ("email", "full_name")
+    search_fields = ("email", "first_name", "last_name")
     ordering = ("-created_at",)
     fieldsets = (
         (None, {"fields": ("email", "password")}),
-        ("Personal Info", {"fields": ("full_name", "org_id", "role")}),
+        ("Personal Info", {"fields": ("first_name", "last_name", "org_id", "role", "image_url")}),
         ("Permissions", {"fields": ("is_active", "is_staff", "is_superuser", "groups", "user_permissions")}),
         ("Important Dates", {"fields": ("created_at", "updated_at")}),
     )
     add_fieldsets = (
-        (None, {"fields": ("email", "full_name", "role", "password1", "password2")}),
+        (None, {"fields": ("email", "first_name", "last_name", "role", "password1", "password2")}),
     )
     readonly_fields = ("created_at", "updated_at")
 

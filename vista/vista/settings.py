@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 import os
+import cloudinary
 
 from decouple import config
 from pathlib import Path
@@ -57,7 +58,14 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt.token_blacklist",
     'django_filters',
     'corsheaders',
+    'cloudinary',
 ]
+
+cloudinary.config(
+    cloud_name=config('CLOUDINARY_CLOUD_NAME'),
+    api_key=config('API_KEY'),
+    api_secret=config('API_SECRET')
+)
 
 AUTH_USER_MODEL = "users.User"
 
