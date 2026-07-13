@@ -2,6 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 from django_filters.rest_framework import DjangoFilterBackend
@@ -24,10 +25,11 @@ class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all().select_related("org_id")
     lookup_field = "user_id"
     pagination_class = StandardResultsPagination
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = UserFilter
-    search_fields = ["full_name", "email"]
-    ordering_fields = ["full_name", "email", "role", "created_at"]
+    search_fields = ["first_name", "last_name", "email"]
+    ordering_fields = ["first_name", "last_name", "email", "role", "created_at"]
     ordering = ["-created_at"]
 
     def get_serializer_class(self):
@@ -85,6 +87,7 @@ class LogoutView(APIView):
 
 class MeView(APIView):
     permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get(self, request):
         return Response(UserSerializer(request.user).data)
