@@ -20,6 +20,9 @@ from .permissions import IsAdmin, IsSelfOrAdmin
 from .filters import UserFilter
 from vista.pagination import StandardResultsPagination
 
+#Import Audit Log Utilities ---
+from audit_logs.utility import log_create, log_update, log_delete, log_login, log_logout
+
 
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all().select_related("org_id")
@@ -48,9 +51,35 @@ class UserViewSet(viewsets.ModelViewSet):
             return [IsAuthenticated(), IsAdmin()]
         return [IsAuthenticated()]
 
+    # Override perform_create ---
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        log_create(
+            user=self.request.user,
+            table_name="tbl_Users",
+            new_data={"email": instance.email, "role": instance.role}
+        )
+
+    #  Override perform_update ---
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        log_update(
+            user=self.request.user,
+            table_name="tbl_Users",
+            old_data={}, 
+            new_data={"email": instance.email}
+        )
+
+    #  Add tracking to perform_destroy ---
     def perform_destroy(self, instance):
+        email = instance.email
         instance.is_active = False
         instance.save(update_fields=["is_active"])
+        log_delete(
+            user=self.request.user,
+            table_name="tbl_Users",
+            old_data={"email": email}
+        )
 
 
 class LoginView(APIView):
@@ -61,6 +90,10 @@ class LoginView(APIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data["user"]
         tokens = serializer.get_tokens(user)
+        
+        # Log the login ---
+        log_login(user)
+        
         return Response(
             {
                 "user": UserSerializer(user).data,
@@ -80,6 +113,10 @@ class LogoutView(APIView):
         try:
             token = RefreshToken(refresh_token)
             token.blacklist()
+            
+            # Log the logout ---
+            log_logout(request.user)
+            
         except TokenError:
             return Response({"detail": "Invalid or expired token."}, status=status.HTTP_400_BAD_REQUEST)
         return Response({"detail": "Successfully logged out."}, status=status.HTTP_205_RESET_CONTENT)
@@ -98,6 +135,15 @@ class MeView(APIView):
         )
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        
+        # Track self-edits ---
+        log_update(
+            user=request.user,
+            table_name="tbl_Users",
+            old_data={},
+            new_data={"profile": "updated"}
+        )
+        
         return Response(UserSerializer(request.user).data)
 
 
@@ -108,4 +154,13 @@ class ChangePasswordView(APIView):
         serializer = ChangePasswordSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        
+        # Track password change ---
+        log_update(
+            user=request.user,
+            table_name="tbl_Users",
+            old_data={},
+            new_data={"action": "password_changed"}
+        )
+        
         return Response({"detail": "Password updated successfully."}, status=status.HTTP_200_OK)
