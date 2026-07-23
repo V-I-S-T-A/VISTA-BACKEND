@@ -15,7 +15,7 @@ class DocumentTypeViewSet(viewsets.ModelViewSet):
     pagination_class = StandardResultsPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = DocumentTypeFilter
-    search_fields = ["name", "description"]
+    search_fields = ["name", "code", "description"]
     ordering_fields = ["name"]
     ordering = ["name"]
 
