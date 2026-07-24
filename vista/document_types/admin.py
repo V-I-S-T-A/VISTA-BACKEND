@@ -4,8 +4,8 @@ from .models import DocumentType
 
 @admin.register(DocumentType)
 class DocumentTypeAdmin(admin.ModelAdmin):
-    list_display = ("name", "is_active")
+    list_display = ("name", "code", "is_active")
     list_filter = ("is_active",)
-    search_fields = ("name", "description")
+    search_fields = ("name", "code", "description")
     ordering = ("name",)
     readonly_fields = ("doc_type_id",)
