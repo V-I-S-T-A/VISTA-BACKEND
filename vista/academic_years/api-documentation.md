@@ -30,13 +30,15 @@ Base URL: `/api/`
 
 - `academic_year_id` (UUID)
 - `year` (string)
+- `is_active` (boolean)
 - `created_at` (datetime)
 
 ### Sample request (create)
 
 ```json
 {
-  "year": "2026/2027"
+  "year": "2026/2027",
+  "is_active": true
 }
 ```
 
@@ -46,6 +48,7 @@ Base URL: `/api/`
 {
   "academic_year_id": "d3b5a8e1-1111-4a2c-9c7d-0a1b2c3d4e5f",
   "year": "2026/2027",
+  "is_active": true,
   "created_at": "2026-06-25T08:00:00Z"
 }
 ```
