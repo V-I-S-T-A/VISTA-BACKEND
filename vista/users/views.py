@@ -94,6 +94,11 @@ class LoginView(APIView):
         # Log the login ---
         log_login(user)
         
+        # Update last_login
+        from django.utils import timezone
+        user.last_login = timezone.now()
+        user.save(update_fields=['last_login'])
+        
         return Response(
             {
                 "user": UserSerializer(user).data,
