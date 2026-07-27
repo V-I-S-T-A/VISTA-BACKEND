@@ -6,11 +6,13 @@ from .models import User
 
 
 class UserSerializer(serializers.ModelSerializer):
+    department = serializers.CharField(source='org_id.name', read_only=True)
+
     class Meta:
         model = User
         fields = [
             "user_id", "org_id", "first_name", "last_name", "email",
-            "role", "image_url", "is_active", "created_at", "updated_at",
+            "role", "image_url", "is_active", "last_login", "department", "created_at", "updated_at",
         ]
         read_only_fields = ["user_id", "created_at", "updated_at"]
 
