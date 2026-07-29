@@ -16,7 +16,7 @@ from .serializers import (
     ChangePasswordSerializer,
     LoginSerializer,
 )
-from .permissions import IsAdmin, IsSelfOrAdmin
+from .permissions import IsAdmin, IsSelfOrAdmin, IsAdminOrStaff
 from .filters import UserFilter
 from vista.pagination import StandardResultsPagination
 
@@ -48,7 +48,7 @@ class UserViewSet(viewsets.ModelViewSet):
         if self.action in ("update", "partial_update", "retrieve"):
             return [IsAuthenticated(), IsSelfOrAdmin()]
         if self.action in ("destroy", "list"):
-            return [IsAuthenticated(), IsAdmin()]
+            return [IsAuthenticated(), IsAdminOrStaff()]
         return [IsAuthenticated()]
 
     # Override perform_create ---

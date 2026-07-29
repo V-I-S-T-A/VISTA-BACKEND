@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from users.models import User
 from .models import Submission
 
 
@@ -51,6 +52,12 @@ class SubmissionListSerializer(serializers.ModelSerializer):
 
 
 class SubmissionCreateSerializer(serializers.ModelSerializer):
+    submitted_by = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.filter(is_active=True),
+        required=False,
+        allow_null=True,
+    )
+
     class Meta:
         model = Submission
         fields = [
@@ -59,14 +66,36 @@ class SubmissionCreateSerializer(serializers.ModelSerializer):
             "org_id",
             "category_id",
             "academic_year_id",
+            "submitted_by",
             "title",
             "description",
         ]
         read_only_fields = ["submission_id"]
 
+    def validate(self, data):
+        request = self.context["request"]
+        submitted_by = data.get("submitted_by")
+        org_id = data.get("org_id")
+
+        if submitted_by:
+            if request.user.role not in ("staff", "admin"):
+                raise serializers.ValidationError(
+                    {"submitted_by": "Only staff or admin users may set the submitter."}
+                )
+            if org_id and submitted_by.org_id_id != org_id.org_id:
+                raise serializers.ValidationError(
+                    {
+                        "submitted_by": 
+                        "Selected submitter must belong to the selected organization.",
+                    }
+                )
+
+        return data
+
     def create(self, validated_data):
         request = self.context["request"]
-        validated_data["submitted_by"] = request.user
+        if not validated_data.get("submitted_by") or request.user.role not in ("staff", "admin"):
+            validated_data["submitted_by"] = request.user
         validated_data["status"] = Submission.STATUS_PENDING
         return Submission.objects.create(**validated_data)
 
