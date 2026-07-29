@@ -8,7 +8,19 @@ Base URL: `/api/`
 
 - `GET /api/submissions/`
 - Permission: Authenticated
-- Notes: `admin` and `staff` see all submissions; normal users see only their own
+- Notes: `admin` and `staff` users see all submissions; normal users only see submissions they created.
+- Query parameters:
+  - `status` (string)
+  - `org_id` (UUID)
+  - `category_id` (UUID)
+  - `doc_type_id` (UUID)
+  - `academic_year_id` (UUID)
+  - `submitted_by` (UUID)
+  - `submitted_after` (datetime, `submitted_at >=`)
+  - `submitted_before` (datetime, `submitted_at <=`)
+  - `search` (string, searches title and description)
+  - `ordering` (string, any of `submitted_at`, `updated_at`, `title`, `status`)
+- Response: paginated list of submissions.
 
 ### Create Submission
 
@@ -16,31 +28,78 @@ Base URL: `/api/`
 - Permission: Authenticated
 - Request body:
   - `doc_type_id` (UUID, required)
-  - `org_id` (UUID, required or null)
-  - `category_id` (UUID, required or null)
-  - `academic_year_id` (UUID, required or null)
+  - `org_id` (UUID, optional)
+  - `category_id` (UUID, optional)
+  - `academic_year_id` (UUID, optional)
   - `title` (string, required)
-  - `description` (string)
-- Response: created submission object (created `submitted_by` uses request user and status defaults to `pending`)
+  - `description` (string, optional)
+  - `submitted_by` (UUID, optional; only allowed for `staff` or `admin` users)
+- Notes:
+  - `submitted_by` is automatically set to the requesting user for normal users.
+  - `status` is set to `pending` on creation.
 
-### Retrieve / Update / Delete
+### Retrieve a Submission
 
 - `GET /api/submissions/{submission_id}/`
+- Permission: Authenticated, owner or admin/staff.
+
+### Update a Submission
+
 - `PUT /api/submissions/{submission_id}/`
 - `PATCH /api/submissions/{submission_id}/`
-- `DELETE /api/submissions/{submission_id}/`
-- Permissions: `retrieve`/`update`/`partial_update` — Authenticated, `IsOwnerOrAdminOrStaff`; `destroy` — Authenticated, `IsAdminOrStaff`
+- Permission: Authenticated, owner or admin/staff.
 
-### Change Status (Custom Action)
+### Delete a Submission
+
+- `DELETE /api/submissions/{submission_id}/`
+- Permission: Authenticated, admin or staff only.
+- Note: delete is a soft delete (`is_active` is set to `False`).
+
+### Change Submission Status
 
 - `PATCH /api/submissions/{submission_id}/status/`
-- Permission: Authenticated, Admin or Staff only
+- Permission: Authenticated, admin or staff only.
 - Request body:
-  - `status` (string, required) — allowed transitions validated by server
+  - `status` (string, required)
   - `remarks_text` (string, optional, write-only)
-- Response: updated submission object
+- Allowed status values:
+  - `pending`
+  - `under_review`
+  - `approved`
+  - `rejected`
+  - `resubmission_required`
+- Valid transitions:
+  - `pending` → `under_review`, `rejected`
+  - `under_review` → `approved`, `rejected`, `resubmission_required`
+  - `resubmission_required` → `under_review`, `pending`
+  - `approved` / `rejected` → no further transitions
 
-### Submission Object Schema
+### Export Submission List
+
+- `GET /api/submissions/export/list/`
+- Permission: Authenticated, admin or staff only.
+- Query parameters are the same as list filters plus:
+  - `date_from` (date)
+  - `date_to` (date)
+- Response: PDF file download of the filtered submission list.
+
+### Export Submission Detail
+
+- `GET /api/submissions/{submission_id}/export/detail/`
+- Permission: Authenticated, admin or staff only.
+- Response: PDF file download for a single submission.
+
+### OCR Autofill Draft
+
+- `POST /api/submissions/autofill/`
+- Permission: Authenticated
+- Content type: `multipart/form-data`
+- Form field:
+  - `file` (PDF or image file, required)
+- Response: draft suggestion payload with OCR-extracted values and optional suggested IDs.
+- Notes: this endpoint does not create a submission record; it only returns suggested values for the client to prefill the submission form.
+
+## Submission Object Schema
 
 - `submission_id` (UUID)
 - `doc_type_id` (UUID)
@@ -59,7 +118,7 @@ Base URL: `/api/`
 - `submitted_at` (datetime)
 - `updated_at` (datetime)
 
-### Sample request (create)
+## Sample request (create)
 
 ```json
 {
@@ -72,7 +131,7 @@ Base URL: `/api/`
 }
 ```
 
-### Sample response (created)
+## Sample response (created)
 
 ```json
 {
@@ -95,7 +154,7 @@ Base URL: `/api/`
 }
 ```
 
-### Sample request (change status)
+## Sample request (change status)
 
 ```json
 {
@@ -104,7 +163,7 @@ Base URL: `/api/`
 }
 ```
 
-### Sample response (after status change)
+## Sample response (after status change)
 
 ```json
 {
