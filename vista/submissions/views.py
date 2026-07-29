@@ -127,7 +127,7 @@ class SubmissionViewSet(viewsets.ModelViewSet):
 
     # Override perform_create to log creation ---
     def perform_create(self, serializer):
-        instance = serializer.save(submitted_by=self.request.user)
+        instance = serializer.save()
         log_create(
             user=self.request.user,
             table_name="tbl_Submissions",
