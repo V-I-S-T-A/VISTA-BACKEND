@@ -3,7 +3,7 @@ from .models import AuditLog
 
 
 class AuditLogSerializer(serializers.ModelSerializer):
-    performed_by = serializers.CharField(source="user_id.full_name", read_only=True)
+    performed_by = serializers.CharField(source="user_id.get_full_name", read_only=True)
     performed_by_email = serializers.CharField(source="user_id.email", read_only=True)
 
     class Meta:
@@ -22,13 +22,17 @@ class AuditLogSerializer(serializers.ModelSerializer):
 
 
 class AuditLogListSerializer(serializers.ModelSerializer):
-    performed_by = serializers.CharField(source="user_id.full_name", read_only=True)
+    performed_by = serializers.CharField(source="user_id.get_full_name", read_only=True)
+    performed_by_email = serializers.CharField(source="user_id.email", read_only=True)
+    performed_by_image = serializers.CharField(source="user_id.image_url", read_only=True)
 
     class Meta:
         model = AuditLog
         fields = [
             "audit_id",
             "performed_by",
+            "performed_by_email",
+            "performed_by_image",
             "action",
             "table_name",
             "performed_at",
