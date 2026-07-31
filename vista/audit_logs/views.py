@@ -28,14 +28,4 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     
     def get_queryset(self):
         queryset = AuditLog.objects.all().select_related("user_id")
-
-        # If no date filters are provided, default to past 24 hours
-        has_date_filter = (
-            self.request.query_params.get("performed_after")
-            or self.request.query_params.get("performed_before")
-        )
-        if not has_date_filter:
-            since = timezone.now() - timedelta(hours=24)
-            queryset = queryset.filter(performed_at__gte=since)
-
         return queryset

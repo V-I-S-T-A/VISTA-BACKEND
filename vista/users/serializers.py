@@ -59,10 +59,11 @@ class UserCreateSerializer(serializers.ModelSerializer):
 
 class UserUpdateSerializer(serializers.ModelSerializer):
     image = serializers.ImageField(write_only=True, required=False, allow_null=True)
+    remove_image = serializers.BooleanField(write_only=True, required=False, default=False)
 
     class Meta:
         model = User
-        fields = ["first_name", "last_name", "org_id", "role", "is_active", "image", "image_url"]
+        fields = ["first_name", "last_name", "org_id", "role", "is_active", "image", "remove_image", "image_url"]
         read_only_fields = ["image_url"]
 
     def validate_role(self, value):
@@ -79,10 +80,14 @@ class UserUpdateSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         image = validated_data.pop("image", None)
+        remove_image = validated_data.pop("remove_image", False)
         instance = super().update(instance, validated_data)
         if image:
             upload_result = cloudinary.uploader.upload(image, folder="vista/users")
             instance.image_url = upload_result["secure_url"]
+            instance.save(update_fields=["image_url"])
+        elif remove_image:
+            instance.image_url = ""
             instance.save(update_fields=["image_url"])
         return instance
 
