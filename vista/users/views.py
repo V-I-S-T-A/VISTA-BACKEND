@@ -1,4 +1,8 @@
+from datetime import datetime
+
+from django.http import FileResponse
 from rest_framework import viewsets, status
+from rest_framework.decorators import action
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -18,6 +22,7 @@ from .serializers import (
 )
 from .permissions import IsAdmin, IsSelfOrAdmin, IsAdminOrStaff
 from .filters import UserFilter
+from .pdf_generator import generate_user_list_pdf
 from vista.pagination import StandardResultsPagination
 
 #Import Audit Log Utilities ---
@@ -47,7 +52,7 @@ class UserViewSet(viewsets.ModelViewSet):
             return [IsAuthenticated(), IsAdmin()]
         if self.action in ("update", "partial_update", "retrieve"):
             return [IsAuthenticated(), IsSelfOrAdmin()]
-        if self.action in ("destroy", "list"):
+        if self.action in ("destroy", "list", "export_list"):
             return [IsAuthenticated(), IsAdminOrStaff()]
         return [IsAuthenticated()]
 
@@ -80,6 +85,38 @@ class UserViewSet(viewsets.ModelViewSet):
             table_name="tbl_Users",
             old_data={"email": email}
         )
+
+    # --- NEW: PDF export of the (filtered) user list ---------------------
+    @action(detail=False, methods=["get"], url_path="export/list")
+    def export_list(self, request):
+        """
+        GET /api/users/export/list/
+
+        Streams back a branded PDF of the currently filtered user list.
+        Respects the same filters as the standard list endpoint (role,
+        is_active, org_id, search, ordering, created_after/before) via
+        `filter_queryset`, so "export what I'm looking at" works without
+        any extra params on the frontend beyond what's already applied.
+        """
+        queryset = self.filter_queryset(self.get_queryset())
+
+        filters_parts = []
+        for param in ("role", "is_active", "org_id"):
+            val = request.query_params.get(param)
+            if val:
+                filters_parts.append(f"{param}={val}")
+        search = request.query_params.get("search")
+        if search:
+            filters_parts.append(f"search={search}")
+        filters_applied = ", ".join(filters_parts) if filters_parts else "None"
+
+        buffer = generate_user_list_pdf(
+            list(queryset),
+            generated_by=request.user.get_full_name(),
+            filters_applied=filters_applied,
+        )
+        filename = f"users_list_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        return FileResponse(buffer, as_attachment=True, filename=filename, content_type="application/pdf")
 
 
 class LoginView(APIView):
