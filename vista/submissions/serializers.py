@@ -1,7 +1,8 @@
 from rest_framework import serializers
 from users.models import User
 from .models import Submission
-
+from documents.models import Document
+from documents.serializers import DocumentSerializer # Ensure you import this!
 
 class SubmissionSerializer(serializers.ModelSerializer):
     submitted_by_name = serializers.CharField(source="submitted_by.full_name", read_only=True)
@@ -9,6 +10,7 @@ class SubmissionSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category_id.name", read_only=True)
     doc_type_name = serializers.CharField(source="doc_type_id.name", read_only=True)
     academic_year = serializers.CharField(source="academic_year_id.year", read_only=True)
+    documents = serializers.SerializerMethodField()
 
     class Meta:
         model = Submission
@@ -29,8 +31,15 @@ class SubmissionSerializer(serializers.ModelSerializer):
             "status",
             "submitted_at",
             "updated_at",
+            "documents", # NEW: Expose the documents array
         ]
         read_only_fields = ["submission_id", "submitted_by", "status", "submitted_at", "updated_at"]
+
+    # NEW: Define the function that grabs the documents
+    def get_documents(self, obj):
+        # Fetch all documents where submission_id matches this submission, and it is the current version
+        docs = Document.objects.filter(submission_id=obj, is_current=True)
+        return DocumentSerializer(docs, many=True).data
 
 
 class SubmissionListSerializer(serializers.ModelSerializer):
