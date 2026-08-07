@@ -56,7 +56,10 @@ import pytesseract
 import cv2
 import numpy as np
 
-
+#Look for the Tesseract path in the .env, if not found, it skips
+tesseract_path = os.getenv("TESSERACT_PATH")
+if tesseract_path:
+    pytesseract.pytesseract.tesseract_cmd = tesseract_path
 # ---------------------------------------------------------------------------
 # 1. Template Registry -- calibrated from the real forms
 # ---------------------------------------------------------------------------
