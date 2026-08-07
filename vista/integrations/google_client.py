@@ -25,6 +25,7 @@ def build_flow(scopes, state=None):
         },
         scopes=scopes,
         state=state,
+        autogenerate_code_verifier=False,
     )
     flow.redirect_uri = settings.GOOGLE_OAUTH_REDIRECT_URI
     return flow
