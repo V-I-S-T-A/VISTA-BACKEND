@@ -63,15 +63,41 @@ def _suggest_doc_type(template_id: str):
 
 
 def _suggest_organization(raw_org_name: str):
-    """Fuzzy-matches OCR'd organization text against real Organization rows."""
+    """Fuzzy-matches OCR'd organization text against real Organization rows (name & acronym)."""
     if not raw_org_name:
         return None, None
-    org_names = list(Organization.objects.filter(is_active=True).values_list("name", flat=True))
-    if not org_names:
+    
+    cleaned_input = raw_org_name.strip()
+    active_orgs = list(Organization.objects.filter(is_active=True))
+
+    if not active_orgs:
         return None, None
-    match, score, _ = process.extractOne(raw_org_name, org_names, scorer=fuzz.ratio)
-    org = Organization.objects.filter(name=match).first() if score >= 70 else None
+
+    # 1. Exact case-insensitive match on acronym (e.g. "SITE", "GDG - USTP")
+    for org in active_orgs:
+        if org.acronym and org.acronym.strip().upper() == cleaned_input.upper():
+            return org, 100.0
+
+    # 2. Check if acronym is contained in raw_org_name or vice-versa
+    for org in active_orgs:
+        if org.acronym and (org.acronym.strip().upper() in cleaned_input.upper() or cleaned_input.upper() in org.acronym.strip().upper()):
+            return org, 90.0
+
+    # 3. Fuzzy match against organization names and acronyms
+    choices = []
+    org_map = {}
+    for org in active_orgs:
+        if org.name:
+            choices.append(org.name)
+            org_map[org.name] = org
+        if org.acronym:
+            choices.append(org.acronym)
+            org_map[org.acronym] = org
+
+    match, score, _ = process.extractOne(cleaned_input, choices, scorer=fuzz.ratio)
+    org = org_map.get(match) if score >= 70 else None
     return org, score
+
 
 
 # Maps the SARF's "venue_category" checkbox result (see CheckboxGroup in
