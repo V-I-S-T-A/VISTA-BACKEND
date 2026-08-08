@@ -7,6 +7,7 @@ class Organization(models.Model):
     name = models.CharField(max_length=255, db_index=True)
     acronym = models.CharField(max_length=50, unique=True, db_index=True)
     description = models.TextField(null=True, blank=True)
+    image_url = models.URLField(max_length=500, null=True, blank=True)
     is_active = models.BooleanField(default=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
