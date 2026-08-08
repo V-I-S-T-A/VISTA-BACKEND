@@ -1,4 +1,5 @@
 from datetime import datetime
+import platform
 
 from django.http import FileResponse
 from rest_framework import viewsets, filters, status as http_status
@@ -12,6 +13,11 @@ from PIL import Image
 from pdf2image import convert_from_bytes
 from rapidfuzz import process, fuzz
 import pytesseract
+
+
+
+if platform.system() == "Windows":
+    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 from .models import Submission
 from .serializers import (
@@ -42,7 +48,10 @@ def _load_as_image(uploaded_file: UploadedFile) -> Image.Image:
     """Accepts either a PDF or a plain image upload and returns a PIL Image."""
     content = uploaded_file.read()
     if uploaded_file.content_type == "application/pdf":
-        return convert_from_bytes(content, dpi=300)[0]
+        if platform.system() == "Windows":
+            return convert_from_bytes(content, dpi=300, poppler_path=r'C:\poppler\Library\bin')[0]
+        else:
+            return convert_from_bytes(content, dpi=300)[0]
     return Image.open(uploaded_file)
 
 
