@@ -55,6 +55,7 @@ from PIL import Image
 import pytesseract
 import cv2
 import numpy as np
+import os
 
 #Look for the Tesseract path in the .env, if not found, it skips
 tesseract_path = os.getenv("TESSERACT_PATH")
