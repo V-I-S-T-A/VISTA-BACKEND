@@ -1,5 +1,6 @@
 from rest_framework import viewsets, filters
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from .models import Organization
 from .serializers import OrganizationSerializer, OrganizationListSerializer
@@ -15,6 +16,7 @@ from audit_logs.utility import log_create, log_update, log_delete
 class OrganizationViewSet(viewsets.ModelViewSet):
     queryset = Organization.objects.all()
     lookup_field = "org_id"
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
     pagination_class = StandardResultsPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = OrganizationFilter
