@@ -35,5 +35,10 @@ class ReviewLogViewSet(viewsets.ReadOnlyModelViewSet):
         if changed_after:
             return queryset.filter(changed_at__gte=changed_after)
 
+        # If filtering by a specific submission, return ALL logs (no time cutoff)
+        # so the review panel can display the full decision history.
+        if self.request.query_params.get("submission_id"):
+            return queryset
+
         cutoff = timezone.now() - timedelta(hours=24)
-        return queryset.filter(changed_at__gte=cutoff)
+        return queryset.filter(changed_at__gte=cutoff)

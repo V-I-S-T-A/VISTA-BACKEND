@@ -5,8 +5,10 @@ from documents.models import Document
 from documents.serializers import DocumentSerializer # Ensure you import this!
 
 class SubmissionSerializer(serializers.ModelSerializer):
-    submitted_by_name = serializers.CharField(source="submitted_by.full_name", read_only=True)
+    submitted_by_name = serializers.CharField(source="submitted_by.get_full_name", read_only=True)
+    submitted_by_email = serializers.CharField(source="submitted_by.email", read_only=True)
     org_name = serializers.CharField(source="org_id.name", read_only=True)
+    org_image_url = serializers.CharField(source="org_id.image_url", read_only=True, allow_null=True)
     category_name = serializers.CharField(source="category_id.name", read_only=True)
     doc_type_name = serializers.CharField(source="doc_type_id.name", read_only=True)
     academic_year = serializers.CharField(source="academic_year_id.year", read_only=True)
@@ -20,8 +22,10 @@ class SubmissionSerializer(serializers.ModelSerializer):
             "doc_type_name",
             "submitted_by",
             "submitted_by_name",
+            "submitted_by_email",
             "org_id",
             "org_name",
+            "org_image_url",
             "category_id",
             "category_name",
             "academic_year_id",
@@ -43,9 +47,12 @@ class SubmissionSerializer(serializers.ModelSerializer):
 
 
 class SubmissionListSerializer(serializers.ModelSerializer):
-    submitted_by_name = serializers.CharField(source="submitted_by.full_name", read_only=True)
+    submitted_by_name = serializers.CharField(source="submitted_by.get_full_name", read_only=True)
+    submitted_by_email = serializers.CharField(source="submitted_by.email", read_only=True)
     org_name = serializers.CharField(source="org_id.name", read_only=True)
+    org_image_url = serializers.CharField(source="org_id.image_url", read_only=True, allow_null=True)
     category_name = serializers.CharField(source="category_id.name", read_only=True)
+    doc_type_name = serializers.CharField(source="doc_type_id.name", read_only=True)
 
     class Meta:
         model = Submission
@@ -54,8 +61,11 @@ class SubmissionListSerializer(serializers.ModelSerializer):
             "title",
             "status",
             "submitted_by_name",
+            "submitted_by_email",
             "org_name",
+            "org_image_url",
             "category_name",
+            "doc_type_name",
             "submitted_at",
         ]
 
@@ -119,15 +129,33 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
     def validate_status(self, value):
         current = self.instance.status
         valid_transitions = {
-            Submission.STATUS_PENDING: [Submission.STATUS_UNDER_REVIEW, Submission.STATUS_REJECTED],
+            Submission.STATUS_PENDING: [
+                Submission.STATUS_UNDER_REVIEW,
+                Submission.STATUS_APPROVED,
+                Submission.STATUS_REJECTED,
+                Submission.STATUS_RESUBMISSION_REQUIRED,
+            ],
             Submission.STATUS_UNDER_REVIEW: [
                 Submission.STATUS_APPROVED,
                 Submission.STATUS_REJECTED,
                 Submission.STATUS_RESUBMISSION_REQUIRED,
             ],
-            Submission.STATUS_RESUBMISSION_REQUIRED: [Submission.STATUS_UNDER_REVIEW, Submission.STATUS_PENDING],
-            Submission.STATUS_APPROVED: [],
-            Submission.STATUS_REJECTED: [],
+            Submission.STATUS_RESUBMISSION_REQUIRED: [
+                Submission.STATUS_UNDER_REVIEW,
+                Submission.STATUS_PENDING,
+                Submission.STATUS_APPROVED,
+                Submission.STATUS_REJECTED,
+            ],
+            Submission.STATUS_APPROVED: [
+                Submission.STATUS_UNDER_REVIEW,
+                Submission.STATUS_RESUBMISSION_REQUIRED,
+                Submission.STATUS_REJECTED,
+            ],
+            Submission.STATUS_REJECTED: [
+                Submission.STATUS_UNDER_REVIEW,
+                Submission.STATUS_RESUBMISSION_REQUIRED,
+                Submission.STATUS_APPROVED,
+            ],
         }
         if value == current:
             raise serializers.ValidationError("Submission is already in this status.")
