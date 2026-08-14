@@ -48,6 +48,7 @@ refuses to run without an explicit reviewer identity.
 """
 
 import re
+from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Optional
 from rapidfuzz import fuzz, process
@@ -172,6 +173,30 @@ FIELD_MATCH_FLOOR = 70
 # ---------------------------------------------------------------------------
 # 2. Preprocessing
 # ---------------------------------------------------------------------------
+def calculate_academic_year(text):
+    # check if the text explicitly contains the academic year
+    ay_match = re.search(r'AY\s*(\d{4}\s*-\s*\d{4})', text, re.IGNORECASE)
+    if ay_match:
+        return ay_match.group(1).replace(" ", "")
+
+    # fallback to calculating based on current date
+    target_date = datetime.now()
+    year = target_date.year
+    month = target_date.month
+    
+    if month >= 8:
+        return f"{year}-{year + 1}"
+    else:
+        return f"{year - 1}-{year}"
+
+def extract_organization(text):
+    # stop capturing when it hits Category, Vision, or a newline
+    org_match = re.search(r'Name of Organization:\s*(.*?)(?:Category:|Vision:|\n|$)', text, re.IGNORECASE)
+    if org_match:
+        clean_org = org_match.group(1).replace('_', '').strip()
+        if clean_org:
+            return clean_org
+    return None
 
 def _order_corners(pts: np.ndarray) -> np.ndarray:
     """Order 4 points as top-left, top-right, bottom-right, bottom-left."""
@@ -458,7 +483,7 @@ def clean_field(raw_value: str, zone: FieldZone, field_name: str = "") -> dict:
 # 6. Orchestration -- produces a DRAFT only
 # ---------------------------------------------------------------------------
 
-def run_autofill_pipeline(page_image: Image.Image, full_ocr_text: str) -> dict:
+def run_autofill_pipeline(page_image, full_ocr_text: str) -> dict:
     """
     Returns a draft suggestion. This function has no side effects on the
     system of record -- it is read-only by design.
@@ -480,6 +505,15 @@ def run_autofill_pipeline(page_image: Image.Image, full_ocr_text: str) -> dict:
     # confirm_and_submit) don't need to special-case which extraction
     # method produced which field.
     cleaned_fields.update(extract_checkbox_groups(image, template))
+
+    # --- New Extraction Logic ---
+    org_name = extract_organization(full_ocr_text)
+    if org_name:
+        cleaned_fields["organization_name"] = {"value": org_name}
+        
+    academic_year = calculate_academic_year(full_ocr_text)
+    if academic_year:
+        cleaned_fields["academic_year"] = {"value": academic_year}
 
     return {
         "status": "draft_pending_review",

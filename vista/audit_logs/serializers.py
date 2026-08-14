@@ -56,6 +56,7 @@ class AuditLogListSerializer(serializers.ModelSerializer):
             "table_name",
             "action",
             "performed_at",
+            "changes", # <-- MUST BE HERE for the frontend details view to work
         ]
 
     def get_performed_by(self, obj):

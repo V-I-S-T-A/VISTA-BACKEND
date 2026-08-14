@@ -35,6 +35,7 @@ from organizations.models import Organization
 from document_types.models import DocumentType
 from categories.models import Category
 from .ocr_autofill_pipeline import run_autofill_pipeline
+from academic_years.models import AcademicYear
 
 # Import Audit Log Utilities ---
 from audit_logs.utility import log_create, log_update, log_delete, log_status_change
@@ -53,6 +54,11 @@ def _load_as_image(uploaded_file: UploadedFile) -> Image.Image:
         else:
             return convert_from_bytes(content, dpi=300)[0]
     return Image.open(uploaded_file)
+
+def _suggest_academic_year(ay_string: str):
+    if not ay_string:
+        return None
+    return AcademicYear.objects.filter(year=ay_string).first()
 
 
 def _suggest_doc_type(template_id: str):
@@ -282,19 +288,24 @@ class SubmissionViewSet(viewsets.ModelViewSet):
             _suggest_organization(org_field["value"]) if org_field else (None, None)
         )
 
-        # venue_category comes from checkbox/mark detection, not OCR text --
-        # see CheckboxGroup in ocr_autofill_pipeline.py. Its value is either
-        # "in_campus", "off_campus", or None (nothing marked / ambiguous).
-        venue_field = draft["fields"].get("venue_category")
-        suggested_category = (
-            _suggest_category(venue_field["value"])
-            if venue_field and venue_field.get("value")
-            else None
-        )
+        # --- NEW CATEGORY LOGIC: Based on Document Type ---
+        suggested_category = None
+        if doc_type:
+            # Check the specific code for the Off-Campus form
+            if doc_type.code == "FM-USTP-OSA-11":
+                suggested_category = Category.objects.filter(name__iexact="Off-Campus").first()
+            else:
+                # All other document types default to In-Campus
+                suggested_category = Category.objects.filter(name__iexact="In-Campus").first()
+        # --------------------------------------------------
+
+        ay_field = draft["fields"].get("academic_year")
+        suggested_ay = _suggest_academic_year(ay_field["value"]) if ay_field else None
 
         draft["suggested_doc_type_id"] = str(doc_type.doc_type_id) if doc_type else None
         draft["suggested_org_id"] = str(suggested_org.org_id) if suggested_org else None
         draft["suggested_org_match_score"] = org_score
         draft["suggested_category_id"] = str(suggested_category.category_id) if suggested_category else None
+        draft["suggested_academic_year_id"] = str(suggested_ay.academic_year_id) if suggested_ay else None
 
         return Response(draft, status=http_status.HTTP_200_OK)
