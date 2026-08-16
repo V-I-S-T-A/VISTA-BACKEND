@@ -77,3 +77,51 @@ def upload_file_to_folder(connection, folder_id, file_name, file_bytes, mime_typ
     media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type, resumable=True)
     uploaded = service.files().create(body=metadata, media_body=media, fields="id, webViewLink").execute()
     return uploaded
+
+def find_or_create_folder(connection, name, parent_id=None):
+    """
+    Looks for a folder named `name` under `parent_id` (or Drive root if
+    parent_id is None). Creates it if it doesn't exist. Returns the folder
+    dict {id, name}.
+    """
+    service = get_drive_service(connection)
+    safe_name = name.replace("'", "\\'")
+    q = (
+        "mimeType = 'application/vnd.google-apps.folder' and trashed = false "
+        f"and name = '{safe_name}'"
+    )
+    q += f" and '{parent_id}' in parents" if parent_id else " and 'root' in parents"
+
+    results = service.files().list(q=q, fields="files(id, name)", pageSize=1).execute()
+    files = results.get("files", [])
+    if files:
+        return files[0]
+
+    metadata = {"name": name, "mimeType": "application/vnd.google-apps.folder"}
+    if parent_id:
+        metadata["parents"] = [parent_id]
+    return service.files().create(body=metadata, fields="id, name").execute()
+
+
+def resolve_submission_folder_path(connection, submission):
+    """
+    Walks/creates the Academic Year -> Organization -> Submission Title
+    folder chain under connection.folder_id (the staff's configured root),
+    returning (deepest_folder_dict, path_segments).
+    """
+    segments = []
+    if submission.academic_year_id:
+        segments.append(submission.academic_year_id.year)
+    if submission.org_id:
+        segments.append(submission.org_id.name)
+    if submission.doc_type_id:
+        segments.append(submission.doc_type_id.name)
+    else:
+        segments.append("Uncategorized")
+
+    parent_id = connection.folder_id or None
+    folder = None
+    for segment in segments:
+        folder = find_or_create_folder(connection, segment, parent_id=parent_id)
+        parent_id = folder["id"]
+    return folder, segments

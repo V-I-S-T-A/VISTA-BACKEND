@@ -52,6 +52,7 @@ services:
       # settings.py currently has CORS_ALLOW_ALL_ORIGINS=True hardcoded,
       # which needs to change to read this env var instead (see notes below).
       CORS_ALLOWED_ORIGINS: https://your-frontend.vercel.app
+      DEBUG: "True"
     depends_on:
       db:
         condition: service_healthy
@@ -60,8 +61,10 @@ services:
     ports:
       - "8000:8000"
     volumes:
+      - .:/app
       - media_files:/app/media
       - static_files:/app/staticfiles
+    command: python manage.py runserver 0.0.0.0:8000
 
   celery:
     build:

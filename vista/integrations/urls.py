@@ -8,6 +8,8 @@ from .views import (
     DriveFolderSelectView,
     DriveFolderCreateView,
     DriveDisconnectView,
+    DriveFolderPathPreviewView,
+    DriveSubmissionUploadView
 )
 
 urlpatterns = [
@@ -18,4 +20,6 @@ urlpatterns = [
     path("drive/folders/select/", DriveFolderSelectView.as_view(), name="drive-folder-select"),
     path("drive/folders/create/", DriveFolderCreateView.as_view(), name="drive-folder-create"),
     path("drive/disconnect/", DriveDisconnectView.as_view(), name="drive-disconnect"),
+    path("drive/folder-path-preview/", DriveFolderPathPreviewView.as_view(), name="drive-folder-path-preview"),
+    path("drive/upload/", DriveSubmissionUploadView.as_view(), name="drive-upload"),
 ]
