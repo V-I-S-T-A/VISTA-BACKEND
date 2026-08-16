@@ -70,6 +70,67 @@ def create_folder(connection, name):
     folder = service.files().create(body=metadata, fields="id, name").execute()
     return folder
 
+def find_or_create_subfolder(connection, parent_id, name):
+    """
+    Looks for a folder named `name` directly under `parent_id`. If found,
+    returns its id. If not found, creates it and returns the new id.
+    Idempotent -- safe to call repeatedly for the same path segment without
+    creating duplicate folders on repeated syncs.
+    """
+    service = get_drive_service(connection)
+    safe_name = name.replace("'", "\\'")
+    query = (
+        "mimeType = 'application/vnd.google-apps.folder' "
+        "and trashed = false "
+        f"and name = '{safe_name}' "
+        f"and '{parent_id}' in parents"
+    )
+    results = service.files().list(q=query, fields="files(id, name)", pageSize=1).execute()
+    files = results.get("files", [])
+    if files:
+        return files[0]["id"]
+
+    metadata = {
+        "name": name,
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": [parent_id],
+    }
+    folder = service.files().create(body=metadata, fields="id, name").execute()
+    return folder["id"]
+
+
+def ensure_folder_path(connection, base_folder_id, path_segments):
+    """
+    Ensures a nested folder path exists under base_folder_id, creating any
+    missing segments along the way (find-or-create per level, so re-syncing
+    the same submission won't create duplicate folder trees). Returns the
+    id of the deepest (final) folder in the path.
+
+    path_segments: list of folder names in order, e.g.
+        ["2025-2026", "SITE", "Accomplishment Report"]
+    """
+    current_parent_id = base_folder_id
+    for segment in path_segments:
+        clean_segment = (segment or "").strip()
+        if not clean_segment:
+            continue
+        current_parent_id = find_or_create_subfolder(connection, current_parent_id, clean_segment)
+    return current_parent_id
+    """
+    Walks/creates a chain of subfolders under `root_folder_id`, one per
+    entry in `path_segments` (in order), and returns the final folder's ID.
+
+    Used to build the Academic Year -> Organization -> Document Type
+    structure under whichever base folder staff picked/created on the
+    GDrive Sync page.
+    """
+    current_parent_id = root_folder_id
+    for raw_segment in path_segments:
+        segment = (raw_segment or "").strip()
+        if not segment:
+            segment = "Unspecified"
+        current_parent_id = find_or_create_folder(connection, current_parent_id, segment)
+    return current_parent_id
 
 def upload_file_to_folder(connection, folder_id, file_name, file_bytes, mime_type):
     service = get_drive_service(connection)
