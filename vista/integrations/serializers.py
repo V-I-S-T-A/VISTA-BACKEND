@@ -26,3 +26,10 @@ class FolderSelectSerializer(serializers.Serializer):
 
 class FolderCreateSerializer(serializers.Serializer):
     folder_name = serializers.CharField(max_length=255)
+
+class DriveUploadSerializer(serializers.Serializer):
+    submission_id = serializers.UUIDField()
+    file = serializers.FileField()
+    file_name = serializers.CharField(required=False, allow_blank=True)
+    folder_id = serializers.CharField(required=False, allow_blank=True)
+    use_auto_folder = serializers.BooleanField(required=False, default=True)
