@@ -51,6 +51,8 @@ import re
 from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Optional
+
+from django.utils.translation import template
 from rapidfuzz import fuzz, process
 from PIL import Image
 import pytesseract
@@ -99,10 +101,11 @@ class TemplateDef:
     template_id: str
     display_name: str
     anchor_phrases: list
-    page_size: tuple                     # (width, height) px @ TEMPLATE_DPI
+    page_size: tuple
     zones: dict = field(default_factory=dict)
-    checkbox_groups: dict = field(default_factory=dict)  # group_name -> CheckboxGroup
-
+    checkbox_groups: dict = field(default_factory=dict)
+    category_name: str = ""
+    doc_type_name: str = ""
 
 TEMPLATE_DPI = 300
 
@@ -162,6 +165,20 @@ TEMPLATE_REGISTRY = [
             "document_code": FieldZone(bbox=(1330, 180, 2220, 300)),
             # NOTE: deliberately no "organization_name" zone -- this form
             # never prints an organization name anywhere on the page.
+        },
+    ),
+    TemplateDef(
+        template_id="FM-USTP-OSA-11",
+        display_name="Local Off-Campus Activities Certificate of Compliance",
+        category_name="Off Campus",
+        doc_type_name="Local Off-Campus Activities Certificate of Compliance",
+        anchor_phrases=[
+            "FM-USTP-OSA-11", "CERTIFICATE OF COMPLIANCE",
+            "LOCAL OFF-CAMPUS ACTIVITIES",
+        ],
+        page_size=(2481, 3509),
+        zones={
+            "document_code": FieldZone(bbox=(1330, 180, 2220, 300)),
         },
     ),
 ]
@@ -520,6 +537,8 @@ def run_autofill_pipeline(page_image, full_ocr_text: str) -> dict:
         "template_id": template.template_id,
         "display_name": template.display_name,
         "template_confidence": template_score,
+        "suggested_category_name": template.category_name,
+        "suggested_doc_type_name": template.doc_type_name,
         "fields": cleaned_fields,
     }
 
