@@ -30,6 +30,8 @@ class AuditLogSerializer(serializers.ModelSerializer):
                 return "System Administrator"
             elif obj.user_id.role == "staff":
                 return "OSA Staff"
+            elif obj.user_id.role == "student": # <--- ADD THIS EXACT LINE
+                return "Student"
             
             return "System User"
             
@@ -70,11 +72,12 @@ class AuditLogListSerializer(serializers.ModelSerializer):
             if obj.user_id.org_id:
                 return obj.user_id.org_id.name
                 
-            # If the user has no organization, check their role!
             if obj.user_id.role == "admin":
                 return "System Administrator"
             elif obj.user_id.role == "staff":
                 return "OSA Staff"
+            elif obj.user_id.role == "student": # <--- ADD THIS EXACT LINE
+                return "Student"
                 
             return "System User"
             
