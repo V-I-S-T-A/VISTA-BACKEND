@@ -38,4 +38,4 @@ class DocumentTypeSerializer(serializers.ModelSerializer):
 class DocumentTypeListSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocumentType
-        fields = ["doc_type_id", "name", "code", "is_active"]
+        fields = ["doc_type_id", "name", "code", "description", "is_active"]
