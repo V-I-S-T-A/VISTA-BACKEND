@@ -13,10 +13,10 @@ class OrganizationSerializer(serializers.ModelSerializer):
     def validate_acronym(self, value):
         return value.strip().upper()
 
-    def validate(self, attrs):
-        if self.instance is None and not attrs.get("image"):
-            raise serializers.ValidationError({"image": "Organization photo is required."})
-        return attrs
+    # def validate(self, attrs):
+    #     if self.instance is None and not attrs.get("image"):
+    #         raise serializers.ValidationError({"image": "Organization photo is required."})
+    #     return attrs
     def create(self, validated_data):
         image = validated_data.pop("image", None)
         organization = Organization.objects.create(**validated_data)
@@ -39,4 +39,4 @@ class OrganizationSerializer(serializers.ModelSerializer):
 class OrganizationListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Organization
-        fields = ["org_id", "name", "acronym", "image_url", "is_active"]
+        fields = ["org_id", "name", "acronym", "description", "image_url", "is_active", "created_at"]
