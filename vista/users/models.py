@@ -1,7 +1,10 @@
 import uuid
+import random
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from organizations.models import Organization
+from datetime import timedelta
+from django.utils import timezone
 
 
 class UserManager(BaseUserManager):
@@ -72,3 +75,29 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def get_short_name(self):
         return self.first_name
+
+class PasswordChangeCode(models.Model):
+    code_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="password_change_codes")
+    code = models.CharField(max_length=6)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    is_used = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = "tbl_Password_Change_Codes"
+        indexes = [
+            models.Index(fields=["user", "-created_at"], name="pwcode_user_created_idx"),
+        ]
+
+    @classmethod
+    def generate_for(cls, user):
+        code = f"{random.randint(0, 999999):06d}"
+        return cls.objects.create(
+            user=user,
+            code=code,
+            expires_at=timezone.now() + timedelta(minutes=10),
+        )
+
+    def is_valid(self):
+        return not self.is_used and timezone.now() <= self.expires_at

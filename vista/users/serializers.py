@@ -127,3 +127,34 @@ class LoginSerializer(serializers.Serializer):
         refresh["role"] = user.role
         refresh["email"] = user.email
         return {"refresh": str(refresh), "access": str(refresh.access_token)}
+class ConfirmPasswordChangeSerializer(serializers.Serializer):
+    old_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(write_only=True, min_length=8)
+    code = serializers.CharField(write_only=True, max_length=6)
+
+    def validate_old_password(self, value):
+        user = self.context["request"].user
+        if not user.check_password(value):
+            raise serializers.ValidationError("Old password is incorrect.")
+        return value
+
+    def validate_code(self, value):
+        from .models import PasswordChangeCode
+        user = self.context["request"].user
+        record = (
+            PasswordChangeCode.objects.filter(user=user, code=value)
+            .order_by("-created_at")
+            .first()
+        )
+        if not record or not record.is_valid():
+            raise serializers.ValidationError("Invalid or expired verification code.")
+        self._code_record = record
+        return value
+
+    def save(self, **kwargs):
+        user = self.context["request"].user
+        user.set_password(self.validated_data["new_password"])
+        user.save()
+        self._code_record.is_used = True
+        self._code_record.save(update_fields=["is_used"])
+        return user

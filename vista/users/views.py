@@ -28,6 +28,11 @@ from vista.pagination import StandardResultsPagination
 #Import Audit Log Utilities ---
 from audit_logs.utility import log_create, log_update, log_delete, log_login, log_logout
 
+#Change password code model
+from django.core.mail import send_mail
+from .models import PasswordChangeCode
+from .serializers import ConfirmPasswordChangeSerializer
+
 
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all().select_related("org_id")
@@ -205,4 +210,42 @@ class ChangePasswordView(APIView):
             new_data={"action": "password_changed"}
         )
         
+        return Response({"detail": "Password updated successfully."}, status=status.HTTP_200_OK)
+
+class RequestPasswordChangeCodeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        record = PasswordChangeCode.generate_for(user)
+
+        send_mail(
+            subject="VISTA — Your password change verification code",
+            message=(
+                f"Hi {user.first_name},\n\n"
+                f"Your verification code to change your VISTA password is: {record.code}\n"
+                f"This code expires in 10 minutes. If you didn't request this, you can ignore this email.\n\n"
+                f"— VISTA, Office of Student Affairs"
+            ),
+            from_email=None,  # falls back to DEFAULT_FROM_EMAIL
+            recipient_list=[user.email],
+            fail_silently=False,
+        )
+        return Response({"detail": "Verification code sent to your email."}, status=status.HTTP_200_OK)
+
+
+class ConfirmPasswordChangeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = ConfirmPasswordChangeSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        log_update(
+            user=request.user,
+            table_name="tbl_Users",
+            old_data={},
+            new_data={"action": "password_changed_via_email_verification"},
+        )
         return Response({"detail": "Password updated successfully."}, status=status.HTTP_200_OK)
