@@ -17,6 +17,7 @@ from .serializers import (
     FolderCreateSerializer,
 )
 from . import google_client
+from .google_client import DriveAuthExpired
 import os
 from django.utils import timezone
 from .serializers import DriveUploadSerializer
@@ -30,12 +31,29 @@ APP_CALLBACK_URL = "vista-app://drive-callback"
 WEB_CALLBACK_URL = "http://localhost:5173/staff/gdrive-sync/callback"
 DRIVE_STATE_SALT = "vista-drive-oauth-state"
 
+
+def _reauth_required_response(connection=None, http_status=status.HTTP_401_UNAUTHORIZED):
+    """Deactivates `connection` (if given) and returns the standard
+    "please reconnect" payload -- the frontend watches for `code` on this
+    to trigger a reconnect prompt instead of a generic error toast."""
+    if connection is not None:
+        connection.is_active = False
+        connection.save(update_fields=["is_active", "updated_at"])
+    return Response(
+        {
+            "detail": "Your Google Drive connection has expired. Please reconnect your Google account.",
+            "code": "drive_reauth_required",
+        },
+        status=http_status,
+    )
+
+
 class DriveConnectionView(APIView):
     permission_classes = [IsAuthenticated, IsAdminOrStaff]
 
     def get(self, request):
         connection = getattr(request.user, "drive_connection", None)
-        if not connection:
+        if not connection or not connection.is_active:
             return Response({"connected": False})
         return Response(
             {"connected": True, **GoogleDriveConnectionSerializer(connection).data}
@@ -47,14 +65,14 @@ class DriveAuthStartView(APIView):
 
     def get(self, request):
         scope_mode = request.query_params.get("mode", "existing")
-        client_type = request.query_params.get("client_type", "web")  # "web" or "mobile"
-        
+        client_type = request.query_params.get("client_type", "web")
+
         scopes = (
             google_client.SCOPES_FULL
             if scope_mode == "existing"
             else google_client.SCOPES_CREATE_ONLY
         )
-        
+
         state_data = {
             "user_id": str(request.user.user_id),
             "client_type": client_type
@@ -101,17 +119,14 @@ class DriveAuthCallbackView(APIView):
             return self._redirect_with_error("Could not complete Google sign-in.", state)
         creds = flow.credentials
 
-        # Extract email from ID token (if available)
         google_account_email = ""
         if hasattr(creds, 'id_token') and creds.id_token:
             import json
             try:
-                # ID token is a JWT, decode the payload
                 import base64
                 parts = creds.id_token.split('.')
                 if len(parts) >= 2:
                     payload = parts[1]
-                    # Add padding if needed
                     padding = 4 - len(payload) % 4
                     if padding != 4:
                         payload += '=' * padding
@@ -137,21 +152,18 @@ class DriveAuthCallbackView(APIView):
         return self._redirect_success(client_type)
 
     def _redirect_with_error(self, detail, state=None):
-        """Redirect to appropriate client with error message."""
-        # Try to extract client_type from state
         client_type = "web"
         if state:
             try:
                 state_data = signing.loads(state, salt=DRIVE_STATE_SALT, max_age=600)
                 client_type = state_data.get("client_type", "web") if isinstance(state_data, dict) else "web"
-            except:
+            except Exception:
                 pass
-        
+
         params = {"status": "error", "detail": detail}
         query_string = urlencode(params)
-        
+
         if client_type == "mobile":
-            # Use HTML meta refresh for custom protocol redirects
             url = f"{APP_CALLBACK_URL}?{query_string}"
             html = f"""
             <html>
@@ -170,12 +182,10 @@ class DriveAuthCallbackView(APIView):
             return redirect(url)
 
     def _redirect_success(self, client_type):
-        """Redirect to appropriate client with success message."""
         params = {"status": "success"}
         query_string = urlencode(params)
-        
+
         if client_type == "mobile":
-            # Use HTML meta refresh for custom protocol redirects
             url = f"{APP_CALLBACK_URL}?{query_string}"
             html = f"""
             <html>
@@ -199,10 +209,13 @@ class DriveFolderListView(APIView):
 
     def get(self, request):
         connection = getattr(request.user, "drive_connection", None)
-        if not connection:
+        if not connection or not connection.is_active:
             return Response({"detail": "Connect Google Drive first."}, status=status.HTTP_400_BAD_REQUEST)
         query = request.query_params.get("search")
-        folders = google_client.list_folders(connection, query=query)
+        try:
+            folders = google_client.list_folders(connection, query=query)
+        except DriveAuthExpired:
+            return _reauth_required_response(connection)
         return Response({"folders": folders})
 
 
@@ -211,7 +224,7 @@ class DriveFolderSelectView(APIView):
 
     def post(self, request):
         connection = getattr(request.user, "drive_connection", None)
-        if not connection:
+        if not connection or not connection.is_active:
             return Response({"detail": "Connect Google Drive first."}, status=status.HTTP_400_BAD_REQUEST)
 
         serializer = FolderSelectSerializer(data=request.data)
@@ -230,13 +243,16 @@ class DriveFolderCreateView(APIView):
 
     def post(self, request):
         connection = getattr(request.user, "drive_connection", None)
-        if not connection:
+        if not connection or not connection.is_active:
             return Response({"detail": "Connect Google Drive first."}, status=status.HTTP_400_BAD_REQUEST)
 
         serializer = FolderCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        folder = google_client.create_folder(connection, serializer.validated_data["folder_name"])
+        try:
+            folder = google_client.create_folder(connection, serializer.validated_data["folder_name"])
+        except DriveAuthExpired:
+            return _reauth_required_response(connection)
 
         connection.folder_mode = GoogleDriveConnection.FOLDER_MODE_CREATED
         connection.folder_id = folder["id"]
@@ -256,9 +272,8 @@ class DriveDisconnectView(APIView):
             connection.save(update_fields=["is_active", "updated_at"])
         return Response({"detail": "Google Drive disconnected."})
 
+
 class DriveFolderPathPreviewView(APIView):
-    """GET /api/drive/folder-path-preview/?submission_id=... — lets the
-    mobile UI show the auto-folder path before anything is created."""
     permission_classes = [IsAuthenticated, IsAdminOrStaff]
 
     def get(self, request):
@@ -285,15 +300,24 @@ class DriveFolderPathPreviewView(APIView):
 
 
 class DriveSubmissionUploadView(APIView):
-    """POST /api/drive/upload/ — the manual archiving action from the
-    Review Panel. Only allowed once a submission is approved."""
+    """
+    POST /api/drive/upload/ — the manual archiving action from the Review
+    Panel. Only allowed once a submission is approved.
+
+    Validates the request and hands the actual Drive upload off to a
+    Celery task (`upload_document_to_drive`), returning 202 immediately
+    with a `task_id`. The mobile app polls
+    `GET /api/drive/upload/status/<task_id>/` in the background and shows
+    a toast once it resolves, instead of the request blocking until the
+    file has finished uploading to Google.
+    """
     permission_classes = [IsAuthenticated, IsAdminOrStaff]
     parser_classes = [MultiPartParser]
 
     def post(self, request):
+        import base64
         from submissions.models import Submission
-        from documents.models import Document
-        from documents.serializers import DocumentSerializer
+        from .tasks import upload_document_to_drive
 
         serializer = DriveUploadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -301,12 +325,10 @@ class DriveSubmissionUploadView(APIView):
 
         connection = getattr(request.user, "drive_connection", None)
         if not connection or not connection.is_active:
-            return Response({"detail": "Connect Google Drive first."}, status=status.HTTP_400_BAD_REQUEST)
+            return _reauth_required_response(None, http_status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            submission = Submission.objects.select_related("academic_year_id", "org_id", "doc_type_id").get(
-                submission_id=data["submission_id"]
-            )
+            submission = Submission.objects.get(submission_id=data["submission_id"])
         except Submission.DoesNotExist:
             return Response({"detail": "Submission not found."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -315,16 +337,6 @@ class DriveSubmissionUploadView(APIView):
                 {"detail": "Only approved submissions can be archived to Drive."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
-        use_auto_folder = data.get("use_auto_folder", True)
-        manual_folder_id = data.get("folder_id")
-        path_segments = None
-
-        if use_auto_folder or not manual_folder_id:
-            folder, path_segments = google_client.resolve_submission_folder_path(connection, submission)
-            target_folder_id = folder["id"]
-        else:
-            target_folder_id = manual_folder_id
 
         uploaded_file = data["file"]
         file_name = data.get("file_name") or submission.title
@@ -335,46 +347,44 @@ class DriveSubmissionUploadView(APIView):
         file_bytes = uploaded_file.read()
         mime_type = uploaded_file.content_type or "application/octet-stream"
 
-        try:
-            uploaded = google_client.upload_file_to_folder(
-                connection=connection,
-                folder_id=target_folder_id,
-                file_name=file_name,
-                file_bytes=file_bytes,
-                mime_type=mime_type,
-            )
-        except Exception:
-            return Response(
-                {"detail": "Failed to upload the file to Google Drive. Please try again."},
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
-
-        # Link the archived file to the submission (auto-versioned, same
-        # pattern as DocumentCreateSerializer.create()).
-        Document.objects.filter(submission_id=submission, is_current=True).update(is_current=False)
-        latest = Document.objects.filter(submission_id=submission).order_by("-version").first()
-        next_version = (latest.version + 1) if latest else 1
-
-        document = Document.objects.create(
-            submission_id=submission,
+        async_result = upload_document_to_drive.delay(
+            staff_user_id=str(request.user.user_id),
+            submission_id=str(submission.submission_id),
+            file_b64=base64.b64encode(file_bytes).decode("ascii"),
             file_name=file_name,
-            file_url=uploaded.get("webViewLink", ""),
             mime_type=mime_type,
-            file_size_kb=max(1, len(file_bytes) // 1024),
-            version=next_version,
-            is_current=True,
+            use_auto_folder=data.get("use_auto_folder", True),
+            manual_folder_id=data.get("folder_id") or None,
         )
-
-        connection.last_synced_at = timezone.now()
-        connection.save(update_fields=["last_synced_at"])
 
         return Response(
-            {
-                "detail": "Document archived to Google Drive.",
-                "drive_file_id": uploaded.get("id"),
-                "drive_view_link": uploaded.get("webViewLink"),
-                "folder_path": path_segments,
-                "document": DocumentSerializer(document).data,
-            },
-            status=status.HTTP_201_CREATED,
+            {"detail": "Upload started.", "task_id": async_result.id, "status": "queued"},
+            status=status.HTTP_202_ACCEPTED,
         )
+
+
+class DriveUploadStatusView(APIView):
+    """
+    GET /api/drive/upload/status/<task_id>/ — polled while a background
+    archive-to-Drive task runs.
+      {"status": "pending"}
+      {"status": "success", "document": {...}, ...}
+      {"status": "error", "detail": "...", "code": "..."}
+    """
+    permission_classes = [IsAuthenticated, IsAdminOrStaff]
+
+    def get(self, request, task_id):
+        from celery.result import AsyncResult
+
+        result = AsyncResult(task_id)
+
+        if not result.ready():
+            return Response({"status": "pending"})
+
+        if result.failed():
+            return Response(
+                {"status": "error", "detail": "The upload failed unexpectedly. Please try again."}
+            )
+
+        payload = result.result or {"status": "error", "detail": "No result returned."}
+        return Response(payload)

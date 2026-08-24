@@ -9,7 +9,8 @@ from .views import (
     DriveFolderCreateView,
     DriveDisconnectView,
     DriveFolderPathPreviewView,
-    DriveSubmissionUploadView
+    DriveSubmissionUploadView,
+    DriveUploadStatusView,
 )
 
 urlpatterns = [
@@ -22,4 +23,5 @@ urlpatterns = [
     path("drive/disconnect/", DriveDisconnectView.as_view(), name="drive-disconnect"),
     path("drive/folder-path-preview/", DriveFolderPathPreviewView.as_view(), name="drive-folder-path-preview"),
     path("drive/upload/", DriveSubmissionUploadView.as_view(), name="drive-upload"),
+    path("drive/upload/status/<str:task_id>/", DriveUploadStatusView.as_view(), name="drive-upload-status"),
 ]

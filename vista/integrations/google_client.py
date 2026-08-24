@@ -4,12 +4,28 @@ from datetime import datetime, timezone
 from django.conf import settings
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
+from google.auth.exceptions import RefreshError
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseUpload
 
 SCOPES_CREATE_ONLY = ["https://www.googleapis.com/auth/drive.file"]
 SCOPES_FULL = ["https://www.googleapis.com/auth/drive"]
+
+
+class DriveAuthExpired(Exception):
+    """
+    Raised whenever the stored Drive OAuth credentials can no longer be
+    used -- refresh token revoked, expired from inactivity (a Google Cloud
+    OAuth consent screen still in "Testing" publishing status caps refresh
+    tokens at 7 days), or the API itself rejects a request as unauthorized.
+
+    There is no retry that fixes this -- the staff member has to go
+    through "Sign in with Google" again. Callers catch this, flip the
+    connection's `is_active` to False, and surface a reconnect prompt
+    instead of a generic failure message.
+    """
 
 
 def build_flow(scopes, state=None):
@@ -42,12 +58,38 @@ def credentials_from_connection(connection):
     )
 
     if creds.expired or not creds.valid:
-        creds.refresh(Request())
+        try:
+            creds.refresh(Request())
+        except RefreshError as exc:
+            raise DriveAuthExpired(
+                "Google Drive credentials could not be refreshed; the "
+                "connection must be re-authorized."
+            ) from exc
         connection.access_token = creds.token
         connection.token_expiry = creds.expiry.replace(tzinfo=timezone.utc)
         connection.save(update_fields=["_access_token", "token_expiry", "updated_at"])
 
     return creds
+
+
+def _execute(request):
+    """
+    Runs a googleapiclient request and normalizes auth-shaped HTTP errors
+    (401/403) into DriveAuthExpired -- a revoked grant can surface either
+    as a failed token refresh OR as a 401/403 on the very next API call if
+    the access token hadn't technically expired yet. Every `.execute()`
+    call in this module goes through here instead of calling it directly.
+    """
+    try:
+        return request.execute()
+    except HttpError as exc:
+        status_code = getattr(exc.resp, "status", None)
+        if status_code in (401, 403):
+            raise DriveAuthExpired(
+                "Google Drive rejected the request as unauthorized; the "
+                "connection must be re-authorized."
+            ) from exc
+        raise
 
 
 def get_drive_service(connection):
@@ -60,22 +102,21 @@ def list_folders(connection, query=None):
     q = "mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     if query:
         q += f" and name contains '{query}'"
-    results = service.files().list(q=q, fields="files(id, name)", pageSize=50).execute()
+    results = _execute(service.files().list(q=q, fields="files(id, name)", pageSize=50))
     return results.get("files", [])
 
 
 def create_folder(connection, name):
     service = get_drive_service(connection)
     metadata = {"name": name, "mimeType": "application/vnd.google-apps.folder"}
-    folder = service.files().create(body=metadata, fields="id, name").execute()
-    return folder
+    return _execute(service.files().create(body=metadata, fields="id, name"))
+
 
 def find_or_create_subfolder(connection, parent_id, name):
     """
     Looks for a folder named `name` directly under `parent_id`. If found,
     returns its id. If not found, creates it and returns the new id.
-    Idempotent -- safe to call repeatedly for the same path segment without
-    creating duplicate folders on repeated syncs.
+    Idempotent -- safe to call repeatedly for the same path segment.
     """
     service = get_drive_service(connection)
     safe_name = name.replace("'", "\\'")
@@ -85,7 +126,7 @@ def find_or_create_subfolder(connection, parent_id, name):
         f"and name = '{safe_name}' "
         f"and '{parent_id}' in parents"
     )
-    results = service.files().list(q=query, fields="files(id, name)", pageSize=1).execute()
+    results = _execute(service.files().list(q=query, fields="files(id, name)", pageSize=1))
     files = results.get("files", [])
     if files:
         return files[0]["id"]
@@ -95,19 +136,14 @@ def find_or_create_subfolder(connection, parent_id, name):
         "mimeType": "application/vnd.google-apps.folder",
         "parents": [parent_id],
     }
-    folder = service.files().create(body=metadata, fields="id, name").execute()
+    folder = _execute(service.files().create(body=metadata, fields="id, name"))
     return folder["id"]
 
 
 def ensure_folder_path(connection, base_folder_id, path_segments):
     """
     Ensures a nested folder path exists under base_folder_id, creating any
-    missing segments along the way (find-or-create per level, so re-syncing
-    the same submission won't create duplicate folder trees). Returns the
-    id of the deepest (final) folder in the path.
-
-    path_segments: list of folder names in order, e.g.
-        ["2025-2026", "SITE", "Accomplishment Report"]
+    missing segments along the way. Returns the id of the deepest folder.
     """
     current_parent_id = base_folder_id
     for segment in path_segments:
@@ -116,34 +152,19 @@ def ensure_folder_path(connection, base_folder_id, path_segments):
             continue
         current_parent_id = find_or_create_subfolder(connection, current_parent_id, clean_segment)
     return current_parent_id
-    """
-    Walks/creates a chain of subfolders under `root_folder_id`, one per
-    entry in `path_segments` (in order), and returns the final folder's ID.
 
-    Used to build the Academic Year -> Organization -> Document Type
-    structure under whichever base folder staff picked/created on the
-    GDrive Sync page.
-    """
-    current_parent_id = root_folder_id
-    for raw_segment in path_segments:
-        segment = (raw_segment or "").strip()
-        if not segment:
-            segment = "Unspecified"
-        current_parent_id = find_or_create_folder(connection, current_parent_id, segment)
-    return current_parent_id
 
 def upload_file_to_folder(connection, folder_id, file_name, file_bytes, mime_type):
     service = get_drive_service(connection)
     metadata = {"name": file_name, "parents": [folder_id]}
     media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type, resumable=True)
-    uploaded = service.files().create(body=metadata, media_body=media, fields="id, webViewLink").execute()
-    return uploaded
+    return _execute(service.files().create(body=metadata, media_body=media, fields="id, webViewLink"))
+
 
 def find_or_create_folder(connection, name, parent_id=None):
     """
-    Looks for a folder named `name` under `parent_id` (or Drive root if
-    parent_id is None). Creates it if it doesn't exist. Returns the folder
-    dict {id, name}.
+    Looks for a folder named `name` under `parent_id` (or Drive root).
+    Creates it if it doesn't exist. Returns the folder dict {id, name}.
     """
     service = get_drive_service(connection)
     safe_name = name.replace("'", "\\'")
@@ -153,7 +174,7 @@ def find_or_create_folder(connection, name, parent_id=None):
     )
     q += f" and '{parent_id}' in parents" if parent_id else " and 'root' in parents"
 
-    results = service.files().list(q=q, fields="files(id, name)", pageSize=1).execute()
+    results = _execute(service.files().list(q=q, fields="files(id, name)", pageSize=1))
     files = results.get("files", [])
     if files:
         return files[0]
@@ -161,14 +182,14 @@ def find_or_create_folder(connection, name, parent_id=None):
     metadata = {"name": name, "mimeType": "application/vnd.google-apps.folder"}
     if parent_id:
         metadata["parents"] = [parent_id]
-    return service.files().create(body=metadata, fields="id, name").execute()
+    return _execute(service.files().create(body=metadata, fields="id, name"))
 
 
 def resolve_submission_folder_path(connection, submission):
     """
     Walks/creates the Academic Year -> Organization -> Submission Title
-    folder chain under connection.folder_id (the staff's configured root),
-    returning (deepest_folder_dict, path_segments).
+    folder chain under connection.folder_id, returning
+    (deepest_folder_dict, path_segments).
     """
     segments = []
     if submission.academic_year_id:
