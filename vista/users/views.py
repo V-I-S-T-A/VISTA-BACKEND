@@ -19,6 +19,8 @@ from .serializers import (
     UserUpdateSerializer,
     ChangePasswordSerializer,
     LoginSerializer,
+    PasswordResetRequestSerializer,
+    PasswordResetConfirmSerializer,
 )
 from .permissions import IsAdmin, IsSelfOrAdmin, IsAdminOrStaff
 from .filters import UserFilter
@@ -249,3 +251,50 @@ class ConfirmPasswordChangeView(APIView):
             new_data={"action": "password_changed_via_email_verification"},
         )
         return Response({"detail": "Password updated successfully."}, status=status.HTTP_200_OK)
+
+
+class PasswordResetRequestView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data["email"]
+        user = User.objects.filter(email__iexact=email, is_active=True).first()
+
+        # Keep the response identical whether an account exists, so this
+        # endpoint cannot be used to enumerate VISTA accounts.
+        if user:
+            record = PasswordChangeCode.generate_for(user)
+            send_mail(
+                subject="VISTA — Password reset verification code",
+                message=(
+                    f"Hi {user.first_name},\n\n"
+                    f"Your VISTA password reset code is: {record.code}\n"
+                    "This code expires in 10 minutes. If you did not request it, you can ignore this email.\n\n"
+                    "— VISTA, Office of Student Affairs"
+                ),
+                from_email=None,
+                recipient_list=[user.email],
+                fail_silently=False,
+            )
+        return Response(
+            {"detail": "If an active account uses that email, a verification code has been sent."},
+            status=status.HTTP_200_OK,
+        )
+
+
+class PasswordResetConfirmView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+        log_update(
+            user=user,
+            table_name="tbl_Users",
+            old_data={},
+            new_data={"action": "password_reset_via_email_verification"},
+        )
+        return Response({"detail": "Password reset successfully."}, status=status.HTTP_200_OK)

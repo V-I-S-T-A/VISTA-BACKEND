@@ -158,3 +158,37 @@ class ConfirmPasswordChangeSerializer(serializers.Serializer):
         self._code_record.is_used = True
         self._code_record.save(update_fields=["is_used"])
         return user
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    code = serializers.CharField(min_length=6, max_length=6)
+    new_password = serializers.CharField(write_only=True, min_length=8)
+
+    def validate(self, attrs):
+        from .models import PasswordChangeCode
+
+        user = User.objects.filter(email__iexact=attrs["email"], is_active=True).first()
+        if not user:
+            raise serializers.ValidationError("Invalid or expired verification code.")
+        record = (
+            PasswordChangeCode.objects.filter(user=user, code=attrs["code"])
+            .order_by("-created_at")
+            .first()
+        )
+        if not record or not record.is_valid():
+            raise serializers.ValidationError("Invalid or expired verification code.")
+        self._user = user
+        self._code_record = record
+        return attrs
+
+    def save(self, **kwargs):
+        self._user.set_password(self.validated_data["new_password"])
+        self._user.save(update_fields=["password"])
+        self._code_record.is_used = True
+        self._code_record.save(update_fields=["is_used"])
+        return self._user
