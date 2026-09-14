@@ -6,7 +6,7 @@ from rest_framework import viewsets, filters, status as http_status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.parsers import MultiPartParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django_filters.rest_framework import DjangoFilterBackend
 from django.core.files.uploadedfile import UploadedFile
 from PIL import Image
@@ -199,7 +199,12 @@ class SubmissionViewSet(viewsets.ModelViewSet):
         )
 
     # Add tracking to change_status ---
-    @action(detail=True, methods=["patch"], url_path="status")
+    @action(
+        detail=True,
+        methods=["patch"],
+        url_path="status",
+        parser_classes=[MultiPartParser, FormParser, JSONParser],
+    )
     def change_status(self, request, submission_id=None):
         submission = self.get_object()
         old_status = submission.status  # Capture old status
@@ -209,6 +214,7 @@ class SubmissionViewSet(viewsets.ModelViewSet):
         )
         serializer.is_valid(raise_exception=True)
         serializer.save()
+
 
         # Log the specific status change
         log_status_change(
