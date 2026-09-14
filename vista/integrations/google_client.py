@@ -193,11 +193,20 @@ def resolve_submission_folder_path(connection, submission):
     """
     segments = []
     if submission.academic_year_id:
-        segments.append(submission.academic_year_id.year)
+        year = getattr(submission.academic_year_id, "year", None) or str(submission.academic_year_id)
+        segments.append(year)
+    else:
+        segments.append("Unspecified Year")
+
     if submission.org_id:
-        segments.append(submission.org_id.name)
+        org = getattr(submission.org_id, "name", None) or str(submission.org_id)
+        segments.append(org)
+    else:
+        segments.append("Unspecified Organization")
+
     if submission.doc_type_id:
-        segments.append(submission.doc_type_id.name)
+        doc_type = getattr(submission.doc_type_id, "name", None) or str(submission.doc_type_id)
+        segments.append(doc_type)
     else:
         segments.append("Uncategorized")
 
