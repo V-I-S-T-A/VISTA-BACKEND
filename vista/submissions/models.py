@@ -6,6 +6,7 @@ from organizations.models import Organization
 from categories.models import Category
 from academic_years.models import AcademicYear
 
+ACCOMPLISHMENT_REPORT_CODE = "FM-USTP-OSA-04B"
 
 class Submission(models.Model):
     STATUS_PENDING = "pending"
@@ -46,3 +47,8 @@ class Submission(models.Model):
 
     def __str__(self):
         return self.title
+
+    @property
+    def is_accomplishment_report(self):
+        doc_type = self.doc_type_id
+        return bool(doc_type and doc_type.code == ACCOMPLISHMENT_REPORT_CODE)
