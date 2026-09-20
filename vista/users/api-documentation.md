@@ -2,7 +2,11 @@
 
 Base URL: `/api/`
 
-## Authentication Endpoints
+## Model
+
+`User` is the primary auth/account model. It stores the account, profile, organization linkage, role, and Cloudinary image URL.
+
+## Authentication endpoints
 
 ### Login
 
@@ -12,19 +16,101 @@ Base URL: `/api/`
   - `email` (string, required)
   - `password` (string, required)
 - Response:
-  - `user`: user object
+  - `user`: serialized user object
   - `tokens`: `{ "refresh": string, "access": string }`
 
-#### Sample request
+### Logout
 
-```json
-{
-  "email": "admin@gmail.com",
-  "password": "AdminPass123"
-}
-```
+- `POST /api/auth/logout/`
+- Permission: Authenticated
+- Request body:
+  - `refresh` (string, required)
 
-#### Sample response
+### Refresh token
+
+- `POST /api/auth/token/refresh/`
+- Permission: AllowAny
+- Request body:
+  - `refresh` (string, required)
+
+### Current user
+
+- `GET /api/auth/me/`
+- `PATCH /api/auth/me/`
+- Permission: Authenticated
+- `PATCH` allows updating `first_name`, `last_name`, `org_id`, `role`, `is_active`, `image`, and `remove_image`
+
+### Change password
+
+- `POST /api/auth/change-password/`
+- Permission: Authenticated
+- Request body:
+  - `old_password` (string, required)
+  - `new_password` (string, required, minimum 8 characters)
+
+### Password reset request
+
+- `POST /api/auth/password-reset/request/`
+- Permission: AllowAny
+- Request body:
+  - `email` (string, required)
+
+### Password reset confirm
+
+- `POST /api/auth/password-reset/confirm/`
+- Permission: AllowAny
+- Request body:
+  - `email` (string, required)
+  - `code` (string, required, 6 digits)
+  - `new_password` (string, required, minimum 8 characters)
+
+## User CRUD endpoints
+
+### List users
+
+- `GET /api/users/`
+- Permission: Authenticated, Admin only
+- Response: list of users
+
+### Create user
+
+- `POST /api/users/`
+- Permission: Authenticated, Admin only
+- Content-Type: `application/json` or `multipart/form-data` if including `image`
+- Request body:
+  - `org_id` (UUID or null)
+  - `first_name` (string, required)
+  - `last_name` (string, required)
+  - `email` (string, required)
+  - `role` (string, required; one of `student`, `staff`, `admin`)
+  - `password` (string, required, minimum 8 characters)
+  - `password_confirm` (string, required, must match `password`)
+  - `image` (file, optional)
+
+### Retrieve / update / delete a user
+
+- `GET /api/users/{user_id}/`
+- `PUT /api/users/{user_id}/`
+- `PATCH /api/users/{user_id}/`
+- `DELETE /api/users/{user_id}/`
+- Permissions: `retrieve` and `update` require the user or an admin; `destroy` is soft delete via `is_active = false`
+
+## Object schema
+
+- `user_id` (UUID)
+- `org_id` (UUID or null)
+- `first_name` (string)
+- `last_name` (string)
+- `email` (string)
+- `role` (string)
+- `image_url` (string or null)
+- `is_active` (boolean)
+- `last_login` (datetime or null)
+- `department` (string, read-only alias of `org_id.name` in serializer responses)
+- `created_at` (datetime)
+- `updated_at` (datetime)
+
+## Example login response
 
 ```json
 {
@@ -37,6 +123,8 @@ Base URL: `/api/`
     "role": "admin",
     "image_url": "https://res.cloudinary.com/demo/image/upload/v1/vista/users/abc123.jpg",
     "is_active": true,
+    "last_login": null,
+    "department": "Vista Academy",
     "created_at": "2026-06-17T12:00:00Z",
     "updated_at": "2026-06-17T12:00:00Z"
   },
@@ -47,203 +135,7 @@ Base URL: `/api/`
 }
 ```
 
-### Logout
-
-- `POST /api/auth/logout/`
-- Permission: Authenticated
-- Request body:
-  - `refresh` (string, required)
-- Response:
-  - `detail`: success message
-
-#### Sample request
-
-```json
-{
-  "refresh": "<refresh_token>"
-}
-```
-
-#### Sample response
-
-```json
-{
-  "detail": "Successfully logged out."
-}
-```
-
-### Refresh Token
-
-- `POST /api/auth/token/refresh/`
-- Permission: AllowAny
-- Request body:
-  - `refresh` (string, required)
-- Response:
-  - `access`: string
-
-#### Sample request
-
-```json
-{
-  "refresh": "<refresh_token>"
-}
-```
-
-#### Sample response
-
-```json
-{
-  "access": "<new_access_token>"
-}
-```
-
-### Current User
-
-- `GET /api/auth/me/`
-- Permission: Authenticated
-- Response: current authenticated user object
-
-#### Sample response
-
-```json
-{
-  "user_id": "4c0e5f4b-1234-4d6f-9f8a-1a2b3c4d5e6f",
-  "org_id": "b7a1d5e7-7890-4c2f-8d6b-3e4f5a6b7c8d",
-  "first_name": "Admin",
-  "last_name": "User",
-  "email": "admin@example.com",
-  "role": "admin",
-  "image_url": "https://res.cloudinary.com/demo/image/upload/v1/vista/users/abc123.jpg",
-  "is_active": true,
-  "created_at": "2026-06-17T12:00:00Z",
-  "updated_at": "2026-06-17T12:00:00Z"
-}
-```
-
-### Update Current User
-
-- `PATCH /api/auth/me/`
-- Permission: Authenticated
-- Content-Type: `application/json` for text-only updates, or `multipart/form-data` if updating `image`
-- Request body: any subset of fields allowed by `UserUpdateSerializer`
-  - `first_name` (string)
-  - `last_name` (string)
-  - `org_id` (UUID or null)
-  - `image` (file, optional — write-only, uploaded to Cloudinary as-is with no resize/crop; response returns `image_url`)
-- Response: updated user object
-
-#### Sample request
-
-```json
-{
-  "first_name": "Administrator",
-  "last_name": "User",
-  "org_id": "b7a1d5e7-7890-4c2f-8d6b-3e4f5a6b7c8d"
-}
-```
-
-#### Sample response
-
-```json
-{
-  "user_id": "4c0e5f4b-1234-4d6f-9f8a-1a2b3c4d5e6f",
-  "org_id": "b7a1d5e7-7890-4c2f-8d6b-3e4f5a6b7c8d",
-  "first_name": "Administrator",
-  "last_name": "User",
-  "email": "admin@example.com",
-  "role": "admin",
-  "image_url": "https://res.cloudinary.com/demo/image/upload/v1/vista/users/abc123.jpg",
-  "is_active": true,
-  "created_at": "2026-06-17T12:00:00Z",
-  "updated_at": "2026-06-17T12:15:00Z"
-}
-```
-
-### Change Password
-
-- `POST /api/auth/change-password/`
-- Permission: Authenticated
-- Request body:
-  - `old_password` (string, required)
-  - `new_password` (string, required, min 8 chars)
-- Response:
-  - `detail`: success message
-
-#### Sample request
-
-```json
-{
-  "old_password": "AdminPass123",
-  "new_password": "NewAdminPass456"
-}
-```
-
-#### Sample response
-
-```json
-{
-  "detail": "Password updated successfully."
-}
-```
-
-## User CRUD Endpoints
-
-The main user endpoints are exposed via the registered router with `basename="user"` and lookup field `user_id`.
-
-### List Users
-
-- `GET /api/users/`
-- Permission: Authenticated, Admin only
-- Response: list of user objects
-
-#### Sample response
-
-```json
-[
-  {
-    "user_id": "4c0e5f4b-1234-4d6f-9f8a-1a2b3c4d5e6f",
-    "org_id": "b7a1d5e7-7890-4c2f-8d6b-3e4f5a6b7c8d",
-    "first_name": "Admin",
-    "last_name": "User",
-    "email": "admin@example.com",
-    "role": "admin",
-    "image_url": "https://res.cloudinary.com/demo/image/upload/v1/vista/users/abc123.jpg",
-    "is_active": true,
-    "created_at": "2026-06-17T12:00:00Z",
-    "updated_at": "2026-06-17T12:00:00Z"
-  },
-  {
-    "user_id": "6d7e8f9a-2345-4b6c-8d7e-2f3a4b5c6d7e",
-    "org_id": "b7a1d5e7-7890-4c2f-8d6b-3e4f5a6b7c8d",
-    "first_name": "Staff",
-    "last_name": "Member",
-    "email": "staff@example.com",
-    "role": "staff",
-    "image_url": null,
-    "is_active": true,
-    "created_at": "2026-06-16T09:00:00Z",
-    "updated_at": "2026-06-16T09:00:00Z"
-  }
-]
-```
-
-### Create User
-
-- `POST /api/users/`
-- Permission: Authenticated, Admin only
-- Content-Type: `application/json`, or `multipart/form-data` if including `image`
-- Request body:
-  - `org_id` (UUID or null)
-  - `first_name` (string, required)
-  - `last_name` (string, required)
-  - `email` (string, required)
-  - `role` (string, required; one of `student`, `staff`, `admin`)
-  - `password` (string, required, min 8 chars)
-  - `password_confirm` (string, required, must match `password`)
-  - `image` (file, optional — write-only, uploaded to Cloudinary as-is with no resize/crop; response returns `image_url`)
-- Response: created user object
-
-#### Sample request
+## Example user creation request
 
 ```json
 {
@@ -257,7 +149,7 @@ The main user endpoints are exposed via the registered router with `basename="us
 }
 ```
 
-#### Sample response
+## Example user creation response
 
 ```json
 {
@@ -274,45 +166,20 @@ The main user endpoints are exposed via the registered router with `basename="us
 }
 ```
 
-### Retrieve User
-
-- `GET /api/users/{user_id}/`
-- Permission: Authenticated, self or admin
-- Response: single user object
-
-#### Sample response
+## Example password update
 
 ```json
 {
-  "user_id": "8f9a0b1c-3456-4d7e-9f8a-3b4c5d6e7f8a",
-  "org_id": "b7a1d5e7-7890-4c2f-8d6b-3e4f5a6b7c8d",
-  "first_name": "New",
-  "last_name": "Student",
-  "email": "student@example.com",
-  "role": "student",
-  "image_url": null,
-  "is_active": true,
-  "created_at": "2026-06-17T12:30:00Z",
-  "updated_at": "2026-06-17T12:30:00Z"
+  "old_password": "AdminPass123",
+  "new_password": "NewAdminPass456"
 }
 ```
 
-### Update User
-
-- `PUT /api/users/{user_id}/`
-- `PATCH /api/users/{user_id}/`
-- Permission: Authenticated, self or admin
-- Content-Type: `application/json`, or `multipart/form-data` if including `image`
-- Request body: subset of fields allowed by `UserUpdateSerializer`
-  - `first_name` (string)
-  - `last_name` (string)
-  - `org_id` (UUID or null)
-  - `role` (string; admin only)
-  - `is_active` (boolean; admin only)
-  - `image` (file, optional — write-only, uploaded to Cloudinary as-is with no resize/crop; response returns `image_url`)
-- Response: updated user object
-
-#### Sample request
+```json
+{
+  "detail": "Password updated successfully."
+}
+```
 
 ```json
 {

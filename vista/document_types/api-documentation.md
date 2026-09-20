@@ -2,45 +2,50 @@
 
 Base URL: `/api/`
 
-## Document Type Endpoints
+## Model
 
-### List Document Types
+`DocumentType` defines the form or record type used by a submission, including optional OCR matching codes and metadata requirements.
+
+## Endpoints
+
+### List document types
 
 - `GET /api/document-types/`
 - Permission: Authenticated
-- Filters: `is_active` (boolean), `code` (exact match, case-insensitive)
-- Response: list of document type objects (list view returns `doc_type_id`, `name`, `code`, `is_active`)
+- Filters:
+  - `is_active` (boolean)
+  - `code` (exact match, case-insensitive)
 
-### Create Document Type
+### Create document type
 
 - `POST /api/document-types/`
 - Permission: Authenticated, Admin only
 - Request body:
   - `name` (string, required)
-  - `code` (string, optional) — machine-readable form code (e.g. `FM-USTP-OSA-04B`); normalized to uppercase server-side; leave blank if this document type has no standardized scannable form
+  - `code` (string, optional) — normalized to uppercase on save; used by OCR autofill matching
   - `description` (string, required)
   - `required_fields` (JSON object, optional)
   - `is_active` (boolean, optional)
-- Response: created document type object
 
-### Retrieve / Update / Delete
+### Retrieve / update / delete
 
 - `GET /api/document-types/{doc_type_id}/`
 - `PUT /api/document-types/{doc_type_id}/`
 - `PATCH /api/document-types/{doc_type_id}/`
-- `DELETE /api/document-types/{doc_type_id}/` (soft delete — sets `is_active = false`)
-- Permissions: `retrieve` — Authenticated; `update`/`partial_update`/`destroy` — Authenticated, Admin only
+- `DELETE /api/document-types/{doc_type_id}/`
+- Permissions: `retrieve` — authenticated; `update`/`partial_update`/`destroy` — admin only
+- Note: the model does not hard-delete; the usual admin action is to set `is_active = false`.
 
-### Document Type Object Schema
+## Object schema
 
 - `doc_type_id` (UUID)
 - `name` (string)
-- `code` (string, nullable) — machine-readable form code, unique when set
+- `code` (string or null)
 - `description` (string)
-- `required_fields` (JSON object) — a JSON schema-like map of fields required for this document type
+- `required_fields` (JSON object)
 - `is_active` (boolean)
 
-### Sample request (create)
+## Example request
 
 ```json
 {
@@ -54,7 +59,7 @@ Base URL: `/api/`
 }
 ```
 
-### Sample response (created)
+## Example response
 
 ```json
 {
@@ -64,22 +69,6 @@ Base URL: `/api/`
   "description": "Standardized OSA activity request form",
   "required_fields": {
     "organization_name": { "type": "string", "required": true }
-  },
-  "is_active": true
-}
-```
-
-### Sample response — document type with no scannable form (`code: null`)
-
-```json
-{
-  "doc_type_id": "8b1a2c3d-4444-4a2b-8c7d-9e0f1a2b3c4e",
-  "name": "Transcript",
-  "code": null,
-  "description": "Official academic transcript",
-  "required_fields": {
-    "student_id": { "type": "string", "required": true },
-    "term": { "type": "string" }
   },
   "is_active": true
 }

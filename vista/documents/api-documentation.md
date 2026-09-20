@@ -2,15 +2,19 @@
 
 Base URL: `/api/`
 
-## Document Endpoints
+## Model
 
-### List Documents
+`Document` stores file metadata for a submission; it tracks versioning and the current active file for that submission.
+
+## Endpoints
+
+### List documents
 
 - `GET /api/documents/`
 - Permission: Authenticated
-- Notes: non-admin/staff users see only documents belonging to their submissions; admin/staff see all
+- Notes: students only see documents for their own submissions; admin/staff can view all.
 
-### Create Document
+### Create document
 
 - `POST /api/documents/`
 - Permission: Authenticated
@@ -20,17 +24,16 @@ Base URL: `/api/`
   - `file_url` (string, required)
   - `mime_type` (string, required)
   - `file_size_kb` (integer, required)
-- Response: created document object (DocumentCreateSerializer uses custom create logic to set `version` and `is_current`)
 
-### Retrieve / Update / Delete
+### Retrieve / update / delete
 
 - `GET /api/documents/{document_id}/`
 - `PUT /api/documents/{document_id}/`
 - `PATCH /api/documents/{document_id}/`
 - `DELETE /api/documents/{document_id}/`
-- Permissions: `destroy` — Authenticated, AdminOrStaff; `retrieve`/`update`/`partial_update` — Authenticated, IsSubmissionOwnerOrAdminOrStaff
+- Permissions: `destroy` — admin/staff; `retrieve`/`update`/`partial_update` — owner or admin/staff
 
-### Document Object Schema
+## Object schema
 
 - `document_id` (UUID)
 - `submission_id` (UUID)
@@ -42,7 +45,7 @@ Base URL: `/api/`
 - `is_current` (boolean)
 - `uploaded_at` (datetime)
 
-### Sample request (create)
+## Example request
 
 ```json
 {
@@ -54,7 +57,7 @@ Base URL: `/api/`
 }
 ```
 
-### Sample response (created)
+## Example response
 
 ```json
 {

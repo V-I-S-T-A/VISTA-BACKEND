@@ -2,38 +2,42 @@
 
 Base URL: `/api/`
 
-## Academic Year Endpoints
+## Model
 
-### List Academic Years
+`AcademicYear` stores a school year label and is used on submissions and the OCR autofill suggestions.
+
+## Endpoints
+
+### List academic years
 
 - `GET /api/academic-years/`
 - Permission: Authenticated
-- Response: list of academic year objects
+- Response: paginated list of academic year records
 
-### Create Academic Year
+### Create academic year
 
 - `POST /api/academic-years/`
 - Permission: Authenticated, Admin only
 - Request body:
-  - `year` (string, required)
-- Response: created academic year object
+  - `year` (string, required, unique)
+  - `is_active` (boolean, optional)
 
-### Retrieve / Update / Delete
+### Retrieve / update / delete
 
 - `GET /api/academic-years/{academic_year_id}/`
 - `PUT /api/academic-years/{academic_year_id}/`
 - `PATCH /api/academic-years/{academic_year_id}/`
 - `DELETE /api/academic-years/{academic_year_id}/`
-- Permissions: `retrieve` — Authenticated; `update`/`partial_update`/`destroy` — Authenticated, Admin only
+- Permissions: `retrieve` — authenticated; `update`/`partial_update`/`destroy` — admin only
 
-### Academic Year Object Schema
+## Object schema
 
 - `academic_year_id` (UUID)
 - `year` (string)
 - `is_active` (boolean)
 - `created_at` (datetime)
 
-### Sample request (create)
+## Example request
 
 ```json
 {
@@ -42,7 +46,7 @@ Base URL: `/api/`
 }
 ```
 
-### Sample response (created)
+## Example response
 
 ```json
 {

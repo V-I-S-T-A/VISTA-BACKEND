@@ -2,36 +2,38 @@
 
 Base URL: `/api/`
 
-## Category Endpoints
+## Model
 
-### List Categories
+`Category` is a simple classification used by submissions and the OCR autofill helper logic.
+
+## Endpoints
+
+### List categories
 
 - `GET /api/categories/`
 - Permission: Authenticated
-- Response: list of category objects
 
-### Create Category
+### Create category
 
 - `POST /api/categories/`
 - Permission: Authenticated, Admin only
 - Request body:
-  - `name` (string, required)
-- Response: created category object
+  - `name` (string, required, unique)
 
-### Retrieve / Update / Delete
+### Retrieve / update / delete
 
 - `GET /api/categories/{category_id}/`
 - `PUT /api/categories/{category_id}/`
 - `PATCH /api/categories/{category_id}/`
 - `DELETE /api/categories/{category_id}/`
-- Permissions: `retrieve` — Authenticated; `update`/`partial_update`/`destroy` — Authenticated, Admin only
+- Permissions: `retrieve` — authenticated; `update`/`partial_update`/`destroy` — admin only
 
-### Category Object Schema
+## Object schema
 
 - `category_id` (UUID)
 - `name` (string)
 
-### Sample request (create)
+## Example request
 
 ```json
 {
@@ -39,7 +41,7 @@ Base URL: `/api/`
 }
 ```
 
-### Sample response (created)
+## Example response
 
 ```json
 {
