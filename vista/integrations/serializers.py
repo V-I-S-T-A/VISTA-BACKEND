@@ -33,3 +33,6 @@ class DriveUploadSerializer(serializers.Serializer):
     file_name = serializers.CharField(required=False, allow_blank=True)
     folder_id = serializers.CharField(required=False, allow_blank=True)
     use_auto_folder = serializers.BooleanField(required=False, default=True)
+    upload_kind = serializers.ChoiceField(
+        choices=("approved", "report"), required=False, default="approved"
+    )

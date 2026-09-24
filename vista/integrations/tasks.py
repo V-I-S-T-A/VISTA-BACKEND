@@ -117,6 +117,7 @@ def upload_document_to_drive(
     mime_type,
     use_auto_folder=True,
     manual_folder_id=None,
+    upload_kind="approved",
 ):
     """
     Backs the manual "Archive to Google Drive" button on the Review Panel.
@@ -130,33 +131,68 @@ def upload_document_to_drive(
     from documents.models import Document
     from documents.serializers import DocumentSerializer
     from submissions.models import Submission
+    from audit_logs.utility import log_create
+    from users.models import User
+
+    staff_user = User.objects.filter(user_id=staff_user_id).first()
+
+    def audit_result(result, drive_file_id=None):
+        log_create(
+            user=staff_user,
+            table_name="tbl_Documents",
+            new_data={
+                "submission_id": submission_id,
+                "file_name": file_name,
+                "drive_file_id": drive_file_id,
+                "action": "manual_drive_archive",
+                "upload_kind": upload_kind,
+                "status": result.get("status"),
+                "code": result.get("code"),
+            },
+        )
 
     try:
         connection = GoogleDriveConnection.objects.get(staff_id=staff_user_id, is_active=True)
     except GoogleDriveConnection.DoesNotExist:
-        return {
+        result = {
             "status": "error",
             "code": "drive_reauth_required",
             "detail": "Connect Google Drive first.",
         }
+        audit_result(result)
+        return result
 
     try:
         submission = Submission.objects.select_related(
             "academic_year_id", "org_id", "doc_type_id"
         ).get(submission_id=submission_id)
     except Submission.DoesNotExist:
-        return {"status": "error", "detail": "Submission not found."}
+        result = {"status": "error", "detail": "Submission not found."}
+        audit_result(result)
+        return result
 
     if submission.status != Submission.STATUS_APPROVED:
-        return {"status": "error", "detail": "Only approved submissions can be archived to Drive."}
+        result = {"status": "error", "detail": "Only approved submissions can be archived to Drive."}
+        audit_result(result)
+        return result
+
+    if upload_kind == "report" and not submission.is_accomplishment_report:
+        result = {"status": "error", "detail": "Report files can only be archived for an Accomplishment Report."}
+        audit_result(result)
+        return result
 
     file_bytes = base64.b64decode(file_b64)
     path_segments = None
 
     try:
-        if use_auto_folder or not manual_folder_id:
+        if upload_kind == "report":
             folder, path_segments = google_client.resolve_submission_folder_path(
-                connection, submission, approved_copy=True
+                connection, submission, approved_copy=False, base_folder_id=manual_folder_id or None
+            )
+            target_folder_id = folder["id"]
+        elif use_auto_folder or not manual_folder_id:
+            folder, path_segments = google_client.resolve_submission_folder_path(
+                connection, submission, approved_copy=True, base_folder_id=manual_folder_id or None
             )
             target_folder_id = folder["id"]
         else:
@@ -172,37 +208,44 @@ def upload_document_to_drive(
     except DriveAuthExpired:
         connection.is_active = False
         connection.save(update_fields=["is_active", "updated_at"])
-        return {
+        result = {
             "status": "error",
             "code": "drive_reauth_required",
             "detail": "Your Google Drive connection has expired. Please reconnect your Google account.",
         }
+        audit_result(result)
+        return result
     except Exception:
         logger.exception("Manual Drive archive failed for submission %s", submission_id)
-        return {"status": "error", "detail": "Failed to upload the file to Google Drive. Please try again."}
+        result = {"status": "error", "detail": "Failed to upload the file to Google Drive. Please try again."}
+        audit_result(result)
+        return result
 
-    Document.objects.filter(submission_id=submission, is_current=True).update(is_current=False)
-    latest = Document.objects.filter(submission_id=submission).order_by("-version").first()
-    next_version = (latest.version + 1) if latest else 1
-
-    document = Document.objects.create(
-        submission_id=submission,
-        file_name=file_name,
-        file_url=uploaded.get("webViewLink", ""),
-        mime_type=mime_type,
-        file_size_kb=max(1, len(file_bytes) // 1024),
-        version=next_version,
-        is_current=True,
-    )
+    document = None
+    if upload_kind == "approved":
+        Document.objects.filter(submission_id=submission, is_current=True).update(is_current=False)
+        latest = Document.objects.filter(submission_id=submission).order_by("-version").first()
+        next_version = (latest.version + 1) if latest else 1
+        document = Document.objects.create(
+            submission_id=submission,
+            file_name=file_name,
+            file_url=uploaded.get("webViewLink", ""),
+            mime_type=mime_type,
+            file_size_kb=max(1, len(file_bytes) // 1024),
+            version=next_version,
+            is_current=True,
+        )
 
     connection.last_synced_at = timezone.now()
     connection.save(update_fields=["last_synced_at"])
 
-    return {
+    result = {
         "status": "success",
         "detail": "Document archived to Google Drive.",
         "drive_file_id": uploaded.get("id"),
         "drive_view_link": uploaded.get("webViewLink"),
         "folder_path": path_segments,
-        "document": DocumentSerializer(document).data,
+        "document": DocumentSerializer(document).data if document else None,
     }
+    audit_result(result, uploaded.get("id"))
+    return result

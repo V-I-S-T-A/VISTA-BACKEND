@@ -206,9 +206,8 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
             ],
         }
         if value == current:
-            # Same status is allowed only when re-attaching files / re-confirming a Drive upload
-            if not (self.initial_data.get("files") or self.initial_data.get("report_files") or self.initial_data.get("drive_folder_id")):
-                raise serializers.ValidationError("Submission is already in this status.")
+            # The web review flow updates status separately from its async Drive uploads.
+            return value
         elif value not in valid_transitions.get(current, []):
             raise serializers.ValidationError(
                 f"Cannot transition from '{current}' to '{value}'."
