@@ -289,13 +289,7 @@ class DriveFolderPathPreviewView(APIView):
         except Submission.DoesNotExist:
             return Response({"detail": "Submission not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        segments = []
-        if submission.academic_year_id:
-            segments.append(submission.academic_year_id.year)
-        if submission.org_id:
-            segments.append(submission.org_id.name)
-        segments.append(submission.doc_type_id.name if submission.doc_type_id else "Uncategorized")
-
+        segments = google_client.submission_folder_segments(submission, approved_copy=True)
         return Response({"path_segments": segments, "suggested_file_name": submission.title})
 
 

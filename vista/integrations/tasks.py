@@ -155,7 +155,9 @@ def upload_document_to_drive(
 
     try:
         if use_auto_folder or not manual_folder_id:
-            folder, path_segments = google_client.resolve_submission_folder_path(connection, submission)
+            folder, path_segments = google_client.resolve_submission_folder_path(
+                connection, submission, approved_copy=True
+            )
             target_folder_id = folder["id"]
         else:
             target_folder_id = manual_folder_id

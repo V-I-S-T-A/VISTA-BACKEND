@@ -213,7 +213,7 @@ class SubmissionViewSet(viewsets.ModelViewSet):
             submission, data=request.data, partial=True, context={"request": request}
         )
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        updated_submission = serializer.save()
 
 
         # Log the specific status change
@@ -225,7 +225,10 @@ class SubmissionViewSet(viewsets.ModelViewSet):
             new_status=submission.status
         )
 
-        return Response(SubmissionSerializer(submission).data, status=http_status.HTTP_200_OK)
+        response_data = SubmissionSerializer(updated_submission).data
+        if hasattr(updated_submission, "drive_sync_result"):
+            response_data["drive_sync"] = updated_submission.drive_sync_result
+        return Response(response_data, status=http_status.HTTP_200_OK)
 
     @action(detail=False, methods=["get"], url_path="export/list")
     def export_list(self, request):
