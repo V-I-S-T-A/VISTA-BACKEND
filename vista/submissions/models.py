@@ -51,4 +51,8 @@ class Submission(models.Model):
     @property
     def is_accomplishment_report(self):
         doc_type = self.doc_type_id
-        return bool(doc_type and doc_type.code == ACCOMPLISHMENT_REPORT_CODE)
+        if not doc_type:
+            return False
+        code = (doc_type.code or "").strip().upper()
+        name = (doc_type.name or "").strip().casefold()
+        return code == ACCOMPLISHMENT_REPORT_CODE or "accomplishment report" in name

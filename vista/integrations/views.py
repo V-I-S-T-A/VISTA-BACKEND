@@ -333,7 +333,7 @@ class DriveSubmissionUploadView(APIView):
             )
 
         uploaded_file = data["file"]
-        file_name = data.get("file_name") or submission.title
+        file_name = data.get("file_name") or uploaded_file.name or submission.title
         _, ext = os.path.splitext(uploaded_file.name)
         if ext and not file_name.lower().endswith(ext.lower()):
             file_name = f"{file_name}{ext}"
@@ -349,6 +349,7 @@ class DriveSubmissionUploadView(APIView):
             mime_type=mime_type,
             use_auto_folder=data.get("use_auto_folder", True),
             manual_folder_id=data.get("folder_id") or None,
+            upload_kind=data.get("upload_kind", "approved"),
         )
 
         return Response(
