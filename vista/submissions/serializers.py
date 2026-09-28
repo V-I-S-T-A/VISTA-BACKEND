@@ -3,6 +3,7 @@ from users.models import User
 from .models import Submission
 from documents.models import Document
 from documents.serializers import DocumentSerializer # Ensure you import this!
+from .emails import send_status_change_email
 import logging
 from typing import NamedTuple
 
@@ -259,6 +260,20 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
             )
             if replaces_documents:
                 self._replace_documents(instance, payloads, urls)
+
+        # Notify the submitter by email whenever the status actually changed.
+        # Sent outside the atomic block, after the DB commit, so a slow or
+        # failing mail server never rolls back (or blocks) the review
+        # decision itself. Remarks are only included in the email body for
+        # resubmission_required -- see submissions/emails.py.
+        if new_status != old_status:
+            try:
+                send_status_change_email(instance, old_status, new_status, remarks_text)
+            except Exception:
+                logger.exception(
+                    "Failed to send status-change email for submission %s",
+                    instance.submission_id,
+                )
 
         if new_status == Submission.STATUS_APPROVED and (uploaded_files or report_files or drive_folder_id):
             instance.drive_sync_result = self._sync_to_drive(
