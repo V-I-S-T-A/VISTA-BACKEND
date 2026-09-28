@@ -149,7 +149,7 @@ class SubmissionViewSet(viewsets.ModelViewSet):
         return SubmissionSerializer
 
     def get_permissions(self):
-        if self.action in ("change_status", "destroy", "export_list", "export_detail"):
+        if self.action in ("change_status", "destroy", "export_list", "export_detail", "statistics", "export_data"):
             return [IsAuthenticated(), IsAdminOrStaff()]
         if self.action in ("retrieve", "update", "partial_update"):
             return [IsAuthenticated(), IsOwnerOrAdminOrStaff()]
@@ -263,6 +263,205 @@ class SubmissionViewSet(viewsets.ModelViewSet):
         buffer = generate_detail_pdf(submission, generated_by=request.user.full_name)
         filename = f"submission_{str(submission.submission_id)[:8]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
         return FileResponse(buffer, as_attachment=True, filename=filename, content_type="application/pdf")
+
+    @action(detail=False, methods=["get"], url_path="statistics")
+    def statistics(self, request):
+        queryset = self.get_queryset()
+        date_from = request.query_params.get("date_from")
+        date_to = request.query_params.get("date_to")
+        category = request.query_params.get("category")
+        academic_year = request.query_params.get("academic_year")
+
+        if date_from:
+            queryset = queryset.filter(submitted_at__date__gte=date_from)
+        if date_to:
+            queryset = queryset.filter(submitted_at__date__lte=date_to)
+        if category and category != "All Categories":
+            queryset = queryset.filter(category_id__name__iexact=category)
+        if academic_year:
+            queryset = queryset.filter(academic_year_id__year=academic_year)
+
+        total = queryset.count()
+        status_counts = {
+            "pending": queryset.filter(status="pending").count(),
+            "under_review": queryset.filter(status="under_review").count(),
+            "approved": queryset.filter(status="approved").count(),
+            "rejected": queryset.filter(status="rejected").count(),
+            "resubmission_required": queryset.filter(status="resubmission_required").count(),
+        }
+
+        from django.db.models import Count
+        by_category = list(
+            queryset.values("category_id__name")
+            .annotate(count=Count("submission_id"))
+            .order_by("-count")
+        )
+        category_data = [
+            {"category": item["category_id__name"] or "Uncategorized", "count": item["count"]}
+            for item in by_category
+        ]
+
+        by_doc_type = list(
+            queryset.values("doc_type_id__name")
+            .annotate(count=Count("submission_id"))
+            .order_by("-count")[:8]
+        )
+        doc_type_data = [
+            {"doc_type": item["doc_type_id__name"] or "Other", "count": item["count"]}
+            for item in by_doc_type
+        ]
+
+        by_org = list(
+            queryset.values("org_id__name", "org_id__acronym")
+            .annotate(count=Count("submission_id"))
+            .order_by("-count")[:8]
+        )
+        org_data = [
+            {
+                "org_name": item["org_id__name"] or "Unknown",
+                "org_acronym": item["org_id__acronym"] or item["org_id__name"] or "N/A",
+                "count": item["count"]
+            }
+            for item in by_org
+        ]
+
+        from django.db.models.functions import TruncWeek, TruncMonth, TruncYear
+
+        # Weekly trends (last 12 weeks)
+        weekly_trends = list(
+            queryset.annotate(week=TruncWeek("submitted_at"))
+            .values("week")
+            .annotate(count=Count("submission_id"))
+            .order_by("week")
+        )
+        weekly_trend_data = [
+            {
+                "label": item["week"].strftime("%b %d") if item["week"] else "Unknown",
+                "count": item["count"]
+            }
+            for item in weekly_trends[-12:]
+        ]
+
+        # Monthly trends (last 12 months)
+        monthly_trends = list(
+            queryset.annotate(month=TruncMonth("submitted_at"))
+            .values("month")
+            .annotate(count=Count("submission_id"))
+            .order_by("month")
+        )
+        monthly_trend_data = [
+            {
+                "label": item["month"].strftime("%b %Y") if item["month"] else "Unknown",
+                "count": item["count"]
+            }
+            for item in monthly_trends[-12:]
+        ]
+
+        # Yearly trends
+        yearly_trends = list(
+            queryset.annotate(year=TruncYear("submitted_at"))
+            .values("year")
+            .annotate(count=Count("submission_id"))
+            .order_by("year")
+        )
+        yearly_trend_data = [
+            {
+                "label": item["year"].strftime("%Y") if item["year"] else "Unknown",
+                "count": item["count"]
+            }
+            for item in yearly_trends[-10:]
+        ]
+
+        # Document types by timeframe interval (weeks: last 4 weeks, months: last 6 months, years: all-time)
+        from datetime import timedelta
+        from django.utils import timezone
+        now = timezone.now()
+
+        by_doc_weeks = list(
+            queryset.filter(submitted_at__gte=now - timedelta(weeks=4))
+            .values("doc_type_id__name")
+            .annotate(count=Count("submission_id"))
+            .order_by("-count")[:8]
+        )
+        doc_type_weeks = [
+            {"doc_type": item["doc_type_id__name"] or "Other", "count": item["count"]}
+            for item in by_doc_weeks
+        ]
+
+        by_doc_months = list(
+            queryset.filter(submitted_at__gte=now - timedelta(days=180))
+            .values("doc_type_id__name")
+            .annotate(count=Count("submission_id"))
+            .order_by("-count")[:8]
+        )
+        doc_type_months = [
+            {"doc_type": item["doc_type_id__name"] or "Other", "count": item["count"]}
+            for item in by_doc_months
+        ]
+
+        # Status counts per category (All, In-Campus, Off-Campus)
+        status_by_category = {
+            "all": status_counts,
+            "in_campus": {
+                "pending": queryset.filter(category_id__name__iexact="In-Campus", status="pending").count(),
+                "under_review": queryset.filter(category_id__name__iexact="In-Campus", status="under_review").count(),
+                "approved": queryset.filter(category_id__name__iexact="In-Campus", status="approved").count(),
+                "rejected": queryset.filter(category_id__name__iexact="In-Campus", status="rejected").count(),
+                "resubmission_required": queryset.filter(category_id__name__iexact="In-Campus", status="resubmission_required").count(),
+            },
+            "off_campus": {
+                "pending": queryset.filter(category_id__name__iexact="Off-Campus", status="pending").count(),
+                "under_review": queryset.filter(category_id__name__iexact="Off-Campus", status="under_review").count(),
+                "approved": queryset.filter(category_id__name__iexact="Off-Campus", status="approved").count(),
+                "rejected": queryset.filter(category_id__name__iexact="Off-Campus", status="rejected").count(),
+                "resubmission_required": queryset.filter(category_id__name__iexact="Off-Campus", status="resubmission_required").count(),
+            },
+        }
+
+        resolved = status_counts["approved"] + status_counts["rejected"]
+        review_velocity = round((resolved / total * 100), 1) if total > 0 else 0
+        approval_rate = round((status_counts["approved"] / (resolved or 1) * 100), 1) if resolved > 0 else 0
+
+        return Response({
+            "total": total,
+            "status_counts": status_counts,
+            "status_by_category": status_by_category,
+            "category_data": category_data,
+            "doc_type_data": doc_type_data,
+            "doc_type_trends": {
+                "weeks": doc_type_weeks,
+                "months": doc_type_months,
+                "years": doc_type_data,
+            },
+            "organization_data": org_data,
+            "monthly_trends": [
+                {"month": item["label"], "count": item["count"]} for item in monthly_trend_data
+            ],
+            "trends": {
+                "weeks": weekly_trend_data,
+                "months": monthly_trend_data,
+                "years": yearly_trend_data,
+            },
+            "resolved_count": resolved,
+            "review_velocity": review_velocity,
+            "approval_rate": approval_rate,
+        }, status=http_status.HTTP_200_OK)
+
+    @action(detail=False, methods=["get"], url_path="export/data")
+    def export_data(self, request):
+        queryset = self.get_queryset()
+        date_from = request.query_params.get("date_from")
+        date_to = request.query_params.get("date_to")
+        if date_from:
+            queryset = queryset.filter(submitted_at__date__gte=date_from)
+        if date_to:
+            queryset = queryset.filter(submitted_at__date__lte=date_to)
+
+        queryset = queryset.select_related(
+            "submitted_by", "org_id", "category_id", "doc_type_id", "academic_year_id"
+        )
+        serializer = SubmissionListSerializer(queryset, many=True)
+        return Response(serializer.data, status=http_status.HTTP_200_OK)
 
     # --- NEW: OCR autofill draft endpoint ---------------------------------
     @action(

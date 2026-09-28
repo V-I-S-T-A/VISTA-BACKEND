@@ -143,16 +143,18 @@ def generate_list_pdf(submissions, generated_by, filters_applied=None):
     story.append(HRFlowable(width="100%", thickness=1, color=BRAND_ACCENT))
     story.append(Spacer(1, 0.3 * cm))
 
-    col_widths = [3.5 * cm, 6 * cm, 3 * cm, 3.5 * cm, 3 * cm, 3 * cm, 3.5 * cm]
-    headers = ["Submission ID", "Title", "Status", "Submitted By", "Organization", "Category", "Submitted At"]
+    col_widths = [3 * cm, 5.2 * cm, 2.8 * cm, 2.7 * cm, 3.5 * cm, 3.8 * cm, 3.2 * cm, 3.2 * cm]
+    headers = ["Submission ID", "Title", "Status", "A.Y.", "Submitted By", "Organization", "Category", "Submitted At"]
     table_data = [[Paragraph(h, s["table_header"]) for h in headers]]
 
     for sub in submissions:
         status_label = sub.get_status_display()
+        ay_label = sub.academic_year_id.year if sub.academic_year_id else "—"
         row = [
             Paragraph(str(sub.submission_id)[:8] + "…", s["table_cell"]),
             Paragraph(sub.title or "—", s["table_cell"]),
             Paragraph(status_label, s["table_cell"]),
+            Paragraph(ay_label, s["table_cell"]),
             Paragraph(sub.submitted_by.full_name if sub.submitted_by else "—", s["table_cell"]),
             Paragraph(sub.org_id.name if sub.org_id else "—", s["table_cell"]),
             Paragraph(sub.category_id.name if sub.category_id else "—", s["table_cell"]),
