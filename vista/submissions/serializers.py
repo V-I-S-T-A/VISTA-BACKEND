@@ -75,6 +75,7 @@ class SubmissionListSerializer(serializers.ModelSerializer):
     org_image_url = serializers.CharField(source="org_id.image_url", read_only=True, allow_null=True)
     category_name = serializers.CharField(source="category_id.name", read_only=True)
     doc_type_name = serializers.CharField(source="doc_type_id.name", read_only=True)
+    academic_year = serializers.CharField(source="academic_year_id.year", read_only=True)
     is_accomplishment_report = serializers.BooleanField(read_only=True)
 
     class Meta:
@@ -83,6 +84,7 @@ class SubmissionListSerializer(serializers.ModelSerializer):
             "submission_id",
             "title",
             "status",
+            "academic_year",
             "submitted_by_name",
             "submitted_by_email",
             "org_name",
