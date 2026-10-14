@@ -9,6 +9,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework.exceptions import PermissionDenied
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters
 
@@ -34,7 +35,11 @@ from audit_logs.utility import log_create, log_update, log_delete, log_login, lo
 from django.core.mail import send_mail
 from .models import PasswordChangeCode
 from .serializers import ConfirmPasswordChangeSerializer
+from .emails import send_welcome_email
 
+import logging
+
+logger = logging.getLogger(__name__)
 
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all().select_related("org_id")
@@ -55,22 +60,50 @@ class UserViewSet(viewsets.ModelViewSet):
         return UserSerializer
 
     def get_permissions(self):
-        if self.action == "create":
+        if self.action in ("create", "destroy"):
             return [IsAuthenticated(), IsAdmin()]
         if self.action in ("update", "partial_update", "retrieve"):
             return [IsAuthenticated(), IsSelfOrAdmin()]
-        if self.action in ("destroy", "list", "export_list"):
+        if self.action in ("list", "export_list"):
             return [IsAuthenticated(), IsAdminOrStaff()]
         return [IsAuthenticated()]
+
+    def perform_destroy(self, instance):
+        if instance.pk == self.request.user.pk:
+            raise PermissionDenied("You cannot delete your own account.")
+        email, role = instance.email, instance.role
+        # Log first so the audit entry is written even if delete raises
+        log_delete(
+            user=self.request.user,
+            table_name="tbl_Users",
+            old_data={"email": email, "role": role},
+        )
+        instance.delete()
 
     # Override perform_create ---
     def perform_create(self, serializer):
         instance = serializer.save()
+        self._created_instance = instance
         log_create(
             user=self.request.user,
             table_name="tbl_Users",
-            new_data={"email": instance.email, "role": instance.role}
+            new_data={"email": instance.email, "role": instance.role},
         )
+        try:
+            send_welcome_email(instance, instance._temp_password)
+            instance._welcome_email_sent = True
+        except Exception:
+            instance._welcome_email_sent = False
+            logger.exception("Welcome email failed for %s", instance.email)
+
+    def create(self, request, *args, **kwargs):
+        response = super().create(request, *args, **kwargs)
+        instance = getattr(self, "_created_instance", None)
+        if instance is not None:
+            response.data["welcome_email_sent"] = getattr(
+                instance, "_welcome_email_sent", False
+            )
+        return response
 
     #  Override perform_update ---
     def perform_update(self, serializer):
@@ -80,17 +113,6 @@ class UserViewSet(viewsets.ModelViewSet):
             table_name="tbl_Users",
             old_data={}, 
             new_data={"email": instance.email}
-        )
-
-    #  Add tracking to perform_destroy ---
-    def perform_destroy(self, instance):
-        email = instance.email
-        instance.is_active = False
-        instance.save(update_fields=["is_active"])
-        log_delete(
-            user=self.request.user,
-            table_name="tbl_Users",
-            old_data={"email": email}
         )
 
     # --- NEW: PDF export of the (filtered) user list ---------------------
@@ -221,18 +243,25 @@ class RequestPasswordChangeCodeView(APIView):
         user = request.user
         record = PasswordChangeCode.generate_for(user)
 
-        send_mail(
-            subject="VISTA — Your password change verification code",
-            message=(
-                f"Hi {user.first_name},\n\n"
-                f"Your verification code to change your VISTA password is: {record.code}\n"
-                f"This code expires in 10 minutes. If you didn't request this, you can ignore this email.\n\n"
-                f"— VISTA, Office of Student Affairs"
-            ),
-            from_email=None,  # falls back to DEFAULT_FROM_EMAIL
-            recipient_list=[user.email],
-            fail_silently=False,
-        )
+        try:
+            send_mail(
+                subject="VISTA — Your password change verification code",
+                message=(
+                    f"Hi {user.first_name},\n\n"
+                    f"Your verification code to change your VISTA password is: {record.code}\n"
+                    f"This code expires in 10 minutes. If you didn't request this, you can ignore this email.\n\n"
+                    f"— VISTA, Office of Student Affairs"
+                ),
+                from_email=None,
+                recipient_list=[user.email],
+                fail_silently=False,
+            )
+        except Exception:
+            logger.exception("Password change code email failed for %s", user.email)
+            return Response(
+                {"detail": "We couldn't send the email. Check the mail server configuration and try again."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         return Response({"detail": "Verification code sent to your email."}, status=status.HTTP_200_OK)
 
 

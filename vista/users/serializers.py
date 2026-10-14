@@ -1,8 +1,29 @@
+import secrets
+import string
+
 import cloudinary.uploader
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
 from .models import User
+
+
+def generate_temp_password(length=12):
+    """
+    Cryptographically secure random password containing at least one
+    lowercase, uppercase, digit, and symbol.
+    """
+    symbols = "!@#$%^&*"
+    alphabet = string.ascii_letters + string.digits + symbols
+    while True:
+        pwd = "".join(secrets.choice(alphabet) for _ in range(length))
+        if (
+            any(c.islower() for c in pwd)
+            and any(c.isupper() for c in pwd)
+            and any(c.isdigit() for c in pwd)
+            and any(c in symbols for c in pwd)
+        ):
+            return pwd
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -12,14 +33,13 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             "user_id", "org_id", "first_name", "last_name", "email",
-            "role", "image_url", "is_active", "last_login", "department", "created_at", "updated_at",
+            "role", "image_url", "is_active", "last_login", "department",
+            "must_change_password", "created_at", "updated_at",
         ]
-        read_only_fields = ["user_id", "created_at", "updated_at"]
+        read_only_fields = ["user_id", "must_change_password", "created_at", "updated_at"]
 
 
 class UserCreateSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, min_length=8)
-    password_confirm = serializers.CharField(write_only=True, min_length=8)
     role = serializers.ChoiceField(choices=User.ROLE_CHOICES, required=True)
     # Write-only upload field. The stored image_url is derived from the
     # Cloudinary response and is never set directly by the client.
@@ -29,14 +49,9 @@ class UserCreateSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             "user_id", "org_id", "first_name", "last_name", "email", "role",
-            "password", "password_confirm", "image", "image_url",
+            "image", "image_url",
         ]
         read_only_fields = ["user_id", "image_url"]
-
-    def validate(self, attrs):
-        if attrs["password"] != attrs.pop("password_confirm"):
-            raise serializers.ValidationError({"password_confirm": "Passwords do not match."})
-        return attrs
 
     def validate_role(self, value):
         request = self.context.get("request")
@@ -45,15 +60,22 @@ class UserCreateSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
-        password = validated_data.pop("password")
         image = validated_data.pop("image", None)
-        user = User.objects.create_user(password=password, **validated_data)
+        temp_password = generate_temp_password()
+
+        user = User.objects.create_user(password=temp_password, **validated_data)
+        user.must_change_password = True
+        user.save(update_fields=["must_change_password"])
+
         if image:
             # No width/height/crop transformation is passed, so Cloudinary
             # stores the image at its original uploaded size.
             upload_result = cloudinary.uploader.upload(image, folder="vista/users")
             user.image_url = upload_result["secure_url"]
             user.save(update_fields=["image_url"])
+
+        # Held in memory only (never saved) so the view can email it once.
+        user._temp_password = temp_password
         return user
 
 
@@ -105,6 +127,7 @@ class ChangePasswordSerializer(serializers.Serializer):
     def save(self, **kwargs):
         user = self.context["request"].user
         user.set_password(self.validated_data["new_password"])
+        user.must_change_password = False
         user.save()
         return user
 
@@ -127,6 +150,8 @@ class LoginSerializer(serializers.Serializer):
         refresh["role"] = user.role
         refresh["email"] = user.email
         return {"refresh": str(refresh), "access": str(refresh.access_token)}
+
+
 class ConfirmPasswordChangeSerializer(serializers.Serializer):
     old_password = serializers.CharField(write_only=True)
     new_password = serializers.CharField(write_only=True, min_length=8)
@@ -154,6 +179,7 @@ class ConfirmPasswordChangeSerializer(serializers.Serializer):
     def save(self, **kwargs):
         user = self.context["request"].user
         user.set_password(self.validated_data["new_password"])
+        user.must_change_password = False
         user.save()
         self._code_record.is_used = True
         self._code_record.save(update_fields=["is_used"])
@@ -188,7 +214,8 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
 
     def save(self, **kwargs):
         self._user.set_password(self.validated_data["new_password"])
-        self._user.save(update_fields=["password"])
+        self._user.must_change_password = False
+        self._user.save(update_fields=["password", "must_change_password"])
         self._code_record.is_used = True
         self._code_record.save(update_fields=["is_used"])
         return self._user
