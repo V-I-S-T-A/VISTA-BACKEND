@@ -93,7 +93,7 @@ Base URL: `/api/`
 - `PUT /api/users/{user_id}/`
 - `PATCH /api/users/{user_id}/`
 - `DELETE /api/users/{user_id}/`
-- Permissions: `retrieve` and `update` require the user or an admin; `destroy` is soft delete via `is_active = false`
+- Permissions: `retrieve` and `update` require the user or an admin; `destroy` requires an admin and permanently deletes the user
 
 ## Object schema
 
@@ -211,15 +211,13 @@ Base URL: `/api/`
 
 - `DELETE /api/users/{user_id}/`
 - Permission: Authenticated, Admin only
-- Behavior: marks the user as inactive (`is_active = false`), does not hard delete
-- Response: no content or standard DRF delete response
+- Behavior: permanently deletes the user. Related notifications, password-change codes, and Google Drive connection are cascade-deleted; submission/review history is retained with user references cleared.
+- Response: no content (HTTP 204)
 
 #### Sample response
 
 ```json
-{
-  "detail": "User deleted successfully."
-}
+No response body (HTTP 204).
 ```
 
 ## User Object Schema
