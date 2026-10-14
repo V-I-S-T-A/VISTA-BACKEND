@@ -8,7 +8,7 @@ name: vista-backend
 services:
   - name: web
     github:
-      repo: your-org/VISTA-BACKEND
+      repo: V-I-S-T-A/VISTA-WEB
       branch: main
       deploy_on_push: true
     dockerfile_path: vista/Dockerfile
@@ -49,7 +49,7 @@ services:
 workers:
   - name: celery-worker
     github:
-      repo: your-org/VISTA-BACKEND
+      repo: V-I-S-T-A/VISTA-BACKEND
       branch: main
       deploy_on_push: true
     dockerfile_path: vista/Dockerfile
