@@ -1,10 +1,33 @@
 from unittest.mock import patch, Mock
+import os
+import runpy
+from pathlib import Path
 
 import requests
 from django.core.mail import send_mail
 from django.test import SimpleTestCase, override_settings
 
 from vista.email_backend import EmailDeliveryError
+
+
+class EmailBackendSelectionTests(SimpleTestCase):
+    def test_resend_key_overrides_stale_smtp_variable(self):
+        with patch.dict(os.environ, {
+            "RESEND_API_KEY": "test-key",
+            "EMAIL_BACKEND": "django.core.mail.backends.smtp.EmailBackend",
+            "DEBUG": "False",
+        }):
+            configured = runpy.run_path(str(Path(__file__).with_name("settings.py")))
+        self.assertEqual(configured["EMAIL_BACKEND"], "vista.email_backend.ResendEmailBackend")
+
+    def test_without_key_explicit_backend_is_preserved(self):
+        with patch.dict(os.environ, {
+            "RESEND_API_KEY": "",
+            "EMAIL_BACKEND": "django.core.mail.backends.locmem.EmailBackend",
+            "DEBUG": "False",
+        }):
+            configured = runpy.run_path(str(Path(__file__).with_name("settings.py")))
+        self.assertEqual(configured["EMAIL_BACKEND"], "django.core.mail.backends.locmem.EmailBackend")
 
 
 @override_settings(
