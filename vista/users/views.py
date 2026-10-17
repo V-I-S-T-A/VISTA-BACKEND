@@ -32,10 +32,9 @@ from vista.pagination import StandardResultsPagination
 from audit_logs.utility import log_create, log_update, log_delete, log_login, log_logout
 
 #Change password code model
-from django.core.mail import send_mail
 from .models import PasswordChangeCode
 from .serializers import ConfirmPasswordChangeSerializer
-from .emails import send_welcome_email
+from .emails import send_welcome_email, send_password_code_email
 
 import logging
 
@@ -244,18 +243,7 @@ class RequestPasswordChangeCodeView(APIView):
         record = PasswordChangeCode.generate_for(user)
 
         try:
-            send_mail(
-                subject="VISTA — Your password change verification code",
-                message=(
-                    f"Hi {user.first_name},\n\n"
-                    f"Your verification code to change your VISTA password is: {record.code}\n"
-                    f"This code expires in 10 minutes. If you didn't request this, you can ignore this email.\n\n"
-                    f"— VISTA, Office of Student Affairs"
-                ),
-                from_email=None,
-                recipient_list=[user.email],
-                fail_silently=False,
-            )
+            send_password_code_email(user, record)
         except Exception:
             logger.exception("Password change code email failed for %s", user.email)
             return Response(
@@ -306,18 +294,7 @@ class PasswordResetRequestView(APIView):
 
     @staticmethod
     def _send_reset_email(user, record):
-            send_mail(
-                subject="VISTA — Password reset verification code",
-                message=(
-                    f"Hi {user.first_name},\n\n"
-                    f"Your VISTA password reset code is: {record.code}\n"
-                    "This code expires in 10 minutes. If you did not request it, you can ignore this email.\n\n"
-                    "— VISTA, Office of Student Affairs"
-                ),
-                from_email=None,
-                recipient_list=[user.email],
-                fail_silently=False,
-            )
+        send_password_code_email(user, record, reset=True)
 
 
 class PasswordResetConfirmView(APIView):

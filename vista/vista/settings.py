@@ -219,6 +219,7 @@ EMAIL_BACKEND = (
     config('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
 )
 GMAIL_API_CLIENT_ID = config('GMAIL_API_CLIENT_ID', default='')
+FRONTEND_URL = config('FRONTEND_URL', default='https://vista-web-production-4086.up.railway.app')
 GMAIL_API_CLIENT_SECRET = config('GMAIL_API_CLIENT_SECRET', default='')
 GMAIL_API_REFRESH_TOKEN = config('GMAIL_API_REFRESH_TOKEN', default='')
 EMAIL_TIMEOUT = config('EMAIL_TIMEOUT', default=15, cast=int)

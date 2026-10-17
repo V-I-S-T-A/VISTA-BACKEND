@@ -1,0 +1,23 @@
+{% autoescape off %}VISTA | Office of Student Affairs
+{{ title }}
+
+Dear {{ name }},
+
+{{ intro }}
+{% if temporary_password %}
+Account email: {{ account_email }}
+Temporary password: {{ temporary_password }}
+{% else %}
+Verification code: {{ code }}
+Valid for 10 minutes.
+{% endif %}
+{{ notice }}
+
+{{ button_label }}: {{ website_url }}
+
+Sincerely,
+VISTA Administration
+Office of Student Affairs
+
+This is an automated account notification. Please do not reply.
+{% endautoescape %}
