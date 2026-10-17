@@ -216,10 +216,11 @@ MEDIA_URL = '/media/'
 #change password 
 RESEND_API_KEY = config('RESEND_API_KEY', default='')
 EMAIL_BACKEND = (
-    'vista.email_backend.ResendEmailBackend'
-    if RESEND_API_KEY.strip()
-    else config('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
+    config('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
 )
+GMAIL_API_CLIENT_ID = config('GMAIL_API_CLIENT_ID', default='')
+GMAIL_API_CLIENT_SECRET = config('GMAIL_API_CLIENT_SECRET', default='')
+GMAIL_API_REFRESH_TOKEN = config('GMAIL_API_REFRESH_TOKEN', default='')
 EMAIL_TIMEOUT = config('EMAIL_TIMEOUT', default=15, cast=int)
 EMAIL_HOST = config('EMAIL_HOST', default='')
 EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
