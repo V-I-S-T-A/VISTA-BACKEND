@@ -295,6 +295,17 @@ class PasswordResetRequestView(APIView):
         # endpoint cannot be used to enumerate VISTA accounts.
         if user:
             record = PasswordChangeCode.generate_for(user)
+            try:
+                self._send_reset_email(user, record)
+            except Exception:
+                logger.exception("Password reset email delivery failed")
+        return Response(
+            {"detail": "If an active account uses that email, a verification code has been sent."},
+            status=status.HTTP_200_OK,
+        )
+
+    @staticmethod
+    def _send_reset_email(user, record):
             send_mail(
                 subject="VISTA — Password reset verification code",
                 message=(
@@ -307,10 +318,6 @@ class PasswordResetRequestView(APIView):
                 recipient_list=[user.email],
                 fail_silently=False,
             )
-        return Response(
-            {"detail": "If an active account uses that email, a verification code has been sent."},
-            status=status.HTTP_200_OK,
-        )
 
 
 class PasswordResetConfirmView(APIView):
