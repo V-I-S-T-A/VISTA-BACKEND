@@ -216,9 +216,7 @@ MEDIA_URL = '/media/'
 #change password 
 RESEND_API_KEY = config('RESEND_API_KEY', default='')
 EMAIL_BACKEND = (
-    'vista.email_backend.ResendEmailBackend'
-    if RESEND_API_KEY.strip()
-    else config('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
+    config('EMAIL_BACKEND', default='django.core.mail.backends.smtp.EmailBackend')
 )
 EMAIL_TIMEOUT = config('EMAIL_TIMEOUT', default=15, cast=int)
 EMAIL_HOST = config('EMAIL_HOST', default='')

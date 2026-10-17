@@ -1,5 +1,15 @@
 # Email on Railway Hobby
 
+SMTP is now the default backend for Railway Pro. To use Gmail, set
+`EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend`, configure the
+`EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, and
+`EMAIL_USE_TLS` values shown in `.env.example`, and redeploy after upgrading
+Railway. Use a Google App Password, not your normal Google account password.
+Any remaining `RESEND_API_KEY` no longer overrides the selected backend.
+Remove that variable if you are returning to SMTP.
+
+The following instructions apply only if explicitly choosing Resend instead.
+
 Railway Hobby blocks outbound SMTP. This project can use Resend's HTTPS API
 for welcome messages, password-change codes, and password-reset codes.
 
@@ -15,9 +25,7 @@ for welcome messages, password-change codes, and password-reset codes.
    EMAIL_TIMEOUT=15
    ```
 
-   A non-empty `RESEND_API_KEY` automatically selects Resend, even if an old
-   `EMAIL_BACKEND` variable still selects SMTP. Remove the key to return to
-   the explicitly configured backend. Without a key, selecting the Resend
+   Set `EMAIL_BACKEND` explicitly to select Resend. Without a key, selecting the Resend
    backend explicitly fails with a configuration error instead of using SMTP.
 
 4. Deploy the variable changes. A Gmail address cannot substitute for a
@@ -28,8 +36,8 @@ for welcome messages, password-change codes, and password-reset codes.
    the recipient's mailbox.
 
 Keep the API key in Railway secrets; never commit it. Existing SMTP settings
-are unused when the Resend backend is selected. Console email remains the
-default when EMAIL_BACKEND is unset; do not use it for production since
+are unused when the Resend backend is selected. Console email is available
+by explicitly selecting its Django backend; do not use it for production since
 message bodies contain temporary passwords and verification codes.
 
 Welcome-email failure preserves the created account and returns
