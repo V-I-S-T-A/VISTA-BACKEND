@@ -15,9 +15,8 @@ for welcome messages, password-change codes, and password-reset codes.
    EMAIL_TIMEOUT=15
    ```
 
-   A non-empty `RESEND_API_KEY` automatically selects Resend, even if an old
-   `EMAIL_BACKEND` variable still selects SMTP. Remove the key to return to
-   the explicitly configured backend. Without a key, selecting the Resend
+   `EMAIL_BACKEND` explicitly selects the backend; `RESEND_API_KEY` does not
+   override that selection. Without a key, selecting the Resend
    backend explicitly fails with a configuration error instead of using SMTP.
 
 4. Deploy the variable changes. A Gmail address cannot substitute for a

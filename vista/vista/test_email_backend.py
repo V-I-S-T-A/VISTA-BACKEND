@@ -11,14 +11,14 @@ from vista.email_backend import EmailDeliveryError
 
 
 class EmailBackendSelectionTests(SimpleTestCase):
-    def test_resend_key_overrides_stale_smtp_variable(self):
+    def test_explicit_backend_overrides_resend_key(self):
         with patch.dict(os.environ, {
             "RESEND_API_KEY": "test-key",
             "EMAIL_BACKEND": "django.core.mail.backends.smtp.EmailBackend",
             "DEBUG": "False",
         }):
             configured = runpy.run_path(str(Path(__file__).with_name("settings.py")))
-        self.assertEqual(configured["EMAIL_BACKEND"], "vista.email_backend.ResendEmailBackend")
+        self.assertEqual(configured["EMAIL_BACKEND"], "django.core.mail.backends.smtp.EmailBackend")
 
     def test_without_key_explicit_backend_is_preserved(self):
         with patch.dict(os.environ, {
