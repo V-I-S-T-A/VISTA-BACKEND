@@ -97,6 +97,7 @@ class SubmissionListSerializer(serializers.ModelSerializer):
 
 
 class SubmissionCreateSerializer(serializers.ModelSerializer):
+    description = serializers.CharField(required=False, allow_blank=True, default="")
     submitted_by = serializers.PrimaryKeyRelatedField(
         queryset=User.objects.filter(is_active=True),
         required=False,

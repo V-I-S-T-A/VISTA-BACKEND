@@ -32,7 +32,7 @@ Base URL: `/api/`
   - `category_id` (UUID, optional)
   - `academic_year_id` (UUID, optional)
   - `title` (string, required)
-  - `description` (string, optional)
+  - `description` (string, optional; may be blank)
   - `submitted_by` (UUID, optional; only allowed for `staff` or `admin` users)
 - Notes:
   - `submitted_by` is automatically set to the requesting user for normal users.
