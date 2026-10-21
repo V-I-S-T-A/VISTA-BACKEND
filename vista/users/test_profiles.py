@@ -25,7 +25,7 @@ class ProfilePersistenceTests(TestCase):
                 self.user.role = role
                 self.user.save(update_fields=["role"])
                 response = self.client.patch(self.url, {
-                    "birth_date": "2000-02-29", "gender": "Non-binary",
+                    "birth_date": "2000-02-29", "gender": "Non-binary", "phone_number": "0912-345-6789",
                 }, format="json")
                 self.assertEqual(response.status_code, 200, response.data)
                 self.user.refresh_from_db()
@@ -34,6 +34,23 @@ class ProfilePersistenceTests(TestCase):
                 reloaded = self.client.get(self.url)
                 self.assertEqual(reloaded.data["birth_date"], "2000-02-29")
                 self.assertEqual(reloaded.data["gender"], "Non-binary")
+                self.assertEqual(reloaded.data["phone_number"], "+639123456789")
+
+    def test_phone_formats_normalize_to_international_format(self):
+        for number in ("9123456789", "09123456789", "+639123456789", "912-345-6789", "+63 912 345 6789"):
+            response = self.client.patch(self.url, {"phone_number": number}, format="json")
+            self.assertEqual(response.status_code, 200, response.data)
+            self.user.refresh_from_db()
+            self.assertEqual(self.user.phone_number, "+639123456789")
+
+    def test_invalid_phone_numbers_are_rejected_without_overwriting_saved_value(self):
+        self.user.phone_number = "+639123456789"
+        self.user.save()
+        for number in ("123", "8123456789", "+1 9123456789", "91234567890", "912abc3456789"):
+            response = self.client.patch(self.url, {"phone_number": number}, format="json")
+            self.assertEqual(response.status_code, 400, response.data)
+            self.user.refresh_from_db()
+            self.assertEqual(self.user.phone_number, "+639123456789")
 
     def test_self_description_and_prefer_not_to_say_are_saved(self):
         for gender in ("Genderqueer", "Prefer not to say", ""):
@@ -54,17 +71,20 @@ class ProfilePersistenceTests(TestCase):
     def test_json_can_clear_optional_details(self):
         self.user.birth_date = "2000-01-01"
         self.user.gender = "Agender"
+        self.user.phone_number = "+639123456789"
         self.user.save()
-        response = self.client.patch(self.url, {"birth_date": None, "gender": ""}, format="json")
+        response = self.client.patch(self.url, {"birth_date": None, "gender": "", "phone_number": ""}, format="json")
         self.assertEqual(response.status_code, 200, response.data)
         self.user.refresh_from_db()
         self.assertIsNone(self.user.birth_date)
         self.assertEqual(self.user.gender, "")
+        self.assertEqual(self.user.phone_number, "")
 
     @patch("users.serializers.cloudinary.uploader.upload", return_value={"secure_url": "https://example.com/avatar.gif"})
     def test_avatar_upload_can_also_clear_optional_details(self, upload):
         self.user.birth_date = "2000-01-01"
         self.user.gender = "Agender"
+        self.user.phone_number = "+639123456789"
         self.user.save()
         image = SimpleUploadedFile(
             "avatar.gif",
@@ -72,12 +92,13 @@ class ProfilePersistenceTests(TestCase):
             content_type="image/gif",
         )
         response = self.client.patch(self.url, {
-            "birth_date": "", "gender": "", "image": image,
+            "birth_date": "", "gender": "", "phone_number": "", "image": image,
         }, format="multipart")
         self.assertEqual(response.status_code, 200, response.data)
         self.user.refresh_from_db()
         self.assertIsNone(self.user.birth_date)
         self.assertEqual(self.user.gender, "")
+        self.assertEqual(self.user.phone_number, "")
         upload.assert_called_once()
 
 
@@ -104,6 +125,7 @@ class UserManagementScopeTests(TestCase):
         self.assertTrue(all(user["role"] != "admin" for user in response.data["results"]))
         self.assertNotIn("birth_date", response.data["results"][0])
         self.assertNotIn("gender", response.data["results"][0])
+        self.assertNotIn("phone_number", response.data["results"][0])
 
     def test_search_and_role_filters_keep_admin_excluded(self):
         for extra in ({"search": "admin@example.com"}, {"role": "admin"}):
