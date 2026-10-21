@@ -42,6 +42,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     first_name = models.CharField(max_length=150, db_index=True)
     last_name = models.CharField(max_length=150, db_index=True)
     email = models.CharField(max_length=255, unique=True)
+    birth_date = models.DateField(blank=True, null=True)
+    gender = models.CharField(max_length=100, blank=True, default="")
     role = models.CharField(max_length=100, choices=ROLE_CHOICES, default="student", db_index=True)
     image_url = models.URLField(max_length=500, blank=True, null=True)
     is_active = models.BooleanField(default=True, db_index=True)

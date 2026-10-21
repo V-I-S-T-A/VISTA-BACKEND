@@ -5,6 +5,7 @@ import cloudinary.uploader
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
+from django.utils import timezone
 from .models import User
 
 
@@ -37,6 +38,13 @@ class UserSerializer(serializers.ModelSerializer):
             "must_change_password", "created_at", "updated_at",
         ]
         read_only_fields = ["user_id", "must_change_password", "created_at", "updated_at"]
+
+
+class ProfileSerializer(UserSerializer):
+    """Personal details returned by the signed-in user's profile endpoint."""
+
+    class Meta(UserSerializer.Meta):
+        fields = UserSerializer.Meta.fields + ["birth_date", "gender"]
 
 
 class UserCreateSerializer(serializers.ModelSerializer):
@@ -85,8 +93,13 @@ class UserUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ["first_name", "last_name", "org_id", "role", "is_active", "image", "remove_image", "image_url"]
+        fields = ["first_name", "last_name", "org_id", "role", "is_active", "image", "remove_image", "image_url", "birth_date", "gender"]
         read_only_fields = ["image_url"]
+
+    def validate_birth_date(self, value):
+        if value and value > timezone.localdate():
+            raise serializers.ValidationError("Birth date cannot be in the future.")
+        return value
 
     def validate_role(self, value):
         request = self.context.get("request")
