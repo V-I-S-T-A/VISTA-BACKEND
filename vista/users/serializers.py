@@ -1,3 +1,4 @@
+import re
 import secrets
 import string
 
@@ -44,7 +45,7 @@ class ProfileSerializer(UserSerializer):
     """Personal details returned by the signed-in user's profile endpoint."""
 
     class Meta(UserSerializer.Meta):
-        fields = UserSerializer.Meta.fields + ["birth_date", "gender"]
+        fields = UserSerializer.Meta.fields + ["birth_date", "gender", "phone_number"]
 
 
 class UserCreateSerializer(serializers.ModelSerializer):
@@ -88,13 +89,28 @@ class UserCreateSerializer(serializers.ModelSerializer):
 
 
 class UserUpdateSerializer(serializers.ModelSerializer):
+    phone_number = serializers.CharField(required=False, allow_blank=True, max_length=40)
     image = serializers.ImageField(write_only=True, required=False, allow_null=True)
     remove_image = serializers.BooleanField(write_only=True, required=False, default=False)
 
     class Meta:
         model = User
-        fields = ["first_name", "last_name", "org_id", "role", "is_active", "image", "remove_image", "image_url", "birth_date", "gender"]
+        fields = ["first_name", "last_name", "org_id", "role", "is_active", "image", "remove_image", "image_url", "birth_date", "gender", "phone_number"]
         read_only_fields = ["image_url"]
+
+    def validate_phone_number(self, value):
+        if not value:
+            return ""
+        if not re.fullmatch(r"[+0-9()\s-]+", value):
+            raise serializers.ValidationError("Use a Philippine mobile number, e.g. +63 912-345-6789.")
+        digits = re.sub(r"\D", "", value)
+        if digits.startswith("63") and len(digits) == 12:
+            digits = digits[2:]
+        elif digits.startswith("0") and len(digits) == 11:
+            digits = digits[1:]
+        if not re.fullmatch(r"9[0-9]{9}", digits):
+            raise serializers.ValidationError("Enter 10 mobile digits starting with 9, e.g. 912-345-6789.")
+        return "+63" + digits
 
     def validate_birth_date(self, value):
         if value and value > timezone.localdate():
