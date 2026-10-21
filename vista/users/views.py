@@ -89,8 +89,10 @@ class UserViewSet(viewsets.ModelViewSet):
             new_data={"email": instance.email, "role": instance.role},
         )
         try:
-            send_welcome_email(instance, instance._temp_password)
-            instance._welcome_email_sent = True
+            sent_count = send_welcome_email(instance, instance._temp_password)
+            instance._welcome_email_sent = sent_count == 1
+            if not instance._welcome_email_sent:
+                logger.error("Welcome email was not sent for %s", instance.email)
         except Exception:
             instance._welcome_email_sent = False
             logger.exception("Welcome email failed for %s", instance.email)
