@@ -16,6 +16,7 @@ from rest_framework import filters
 from .models import User
 from .serializers import (
     UserSerializer,
+    ProfileSerializer,
     UserCreateSerializer,
     UserUpdateSerializer,
     ChangePasswordSerializer,
@@ -89,8 +90,10 @@ class UserViewSet(viewsets.ModelViewSet):
             new_data={"email": instance.email, "role": instance.role},
         )
         try:
-            send_welcome_email(instance, instance._temp_password)
-            instance._welcome_email_sent = True
+            sent_count = send_welcome_email(instance, instance._temp_password)
+            instance._welcome_email_sent = sent_count == 1
+            if not instance._welcome_email_sent:
+                logger.error("Welcome email was not sent for %s", instance.email)
         except Exception:
             instance._welcome_email_sent = False
             logger.exception("Welcome email failed for %s", instance.email)
@@ -197,7 +200,7 @@ class MeView(APIView):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get(self, request):
-        return Response(UserSerializer(request.user).data)
+        return Response(ProfileSerializer(request.user).data)
 
     def patch(self, request):
         serializer = UserUpdateSerializer(
@@ -214,7 +217,7 @@ class MeView(APIView):
             new_data={"profile": "updated"}
         )
         
-        return Response(UserSerializer(request.user).data)
+        return Response(ProfileSerializer(request.user).data)
 
 
 class ChangePasswordView(APIView):
