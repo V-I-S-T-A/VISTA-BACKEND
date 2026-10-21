@@ -16,6 +16,7 @@ from rest_framework import filters
 from .models import User
 from .serializers import (
     UserSerializer,
+    ProfileSerializer,
     UserCreateSerializer,
     UserUpdateSerializer,
     ChangePasswordSerializer,
@@ -199,7 +200,7 @@ class MeView(APIView):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get(self, request):
-        return Response(UserSerializer(request.user).data)
+        return Response(ProfileSerializer(request.user).data)
 
     def patch(self, request):
         serializer = UserUpdateSerializer(
@@ -216,7 +217,7 @@ class MeView(APIView):
             new_data={"profile": "updated"}
         )
         
-        return Response(UserSerializer(request.user).data)
+        return Response(ProfileSerializer(request.user).data)
 
 
 class ChangePasswordView(APIView):
