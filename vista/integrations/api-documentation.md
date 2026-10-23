@@ -31,9 +31,33 @@ These endpoints allow staff/admin users to connect their Google account, select 
 - `GET /api/drive/auth/callback/`
 - Permission: AllowAny
 - This is the redirect endpoint used by Google after consent.
-- On success it redirects back to:
-  - web: `http://localhost:5173/staff/gdrive-sync/callback`
+- On success or failure it redirects back to:
+  - web: `${FRONTEND_URL}/staff/gdrive-sync/callback` (trailing slash on the base URL is optional)
   - mobile: `vista-app://drive-callback`
+
+### Production configuration
+
+Set these variables on the Railway **Backend** service:
+
+```env
+FRONTEND_URL=https://vista-web-production-4086.up.railway.app
+GOOGLE_OAUTH_CLIENT_ID=your-google-oauth-client-id
+GOOGLE_OAUTH_CLIENT_SECRET=your-google-oauth-client-secret
+GOOGLE_OAUTH_REDIRECT_URI=https://vista-backend-production-10d7.up.railway.app/api/drive/auth/callback/
+```
+
+Use the actual deployed frontend base URL for `FRONTEND_URL`, without the
+`/staff/gdrive-sync/callback` path. Use the client ID and secret from your Google
+Cloud web OAuth client; keep the secret on the backend.
+
+The Google Cloud client's **Authorized redirect URIs** must contain the exact
+`GOOGLE_OAUTH_REDIRECT_URI` above, including its trailing slash. Google sends its
+response to this backend endpoint; after processing it, the backend redirects
+the browser to the frontend with `status=success` or `status=error`.
+
+Redeploy/restart the backend after changing its environment variables. For local
+development, set `FRONTEND_URL=http://localhost:5173` and configure a separate
+local backend redirect URI in both the backend environment and Google Cloud.
 
 ### Disconnect Google Drive
 

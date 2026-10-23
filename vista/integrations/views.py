@@ -28,7 +28,7 @@ from rest_framework.permissions import AllowAny
 from users.models import User
 
 APP_CALLBACK_URL = "vista-app://drive-callback"
-WEB_CALLBACK_URL = "http://localhost:5173/staff/gdrive-sync/callback"
+WEB_CALLBACK_URL = f"{settings.FRONTEND_URL.rstrip('/')}/staff/gdrive-sync/callback"
 DRIVE_STATE_SALT = "vista-drive-oauth-state"
 
 
