@@ -25,7 +25,39 @@ class GmailAPIEmailBackend(BaseEmailBackend):
         if failed:
             raise EmailDeliveryError("Gmail API request failed or timed out.")
         if not 200 <= response.status_code < 300:
-            raise EmailDeliveryError(f"Gmail API rejected request (HTTP {response.status_code}).")
+            stage = "authorization" if url == "https://oauth2.googleapis.com/token" else "sending"
+            # Only fixed, recognized error codes may enter logs. Never include
+            # Google's free-form descriptions, response bodies, or credentials.
+            hints = {
+                "invalid_grant": "invalid_grant: renew the sender refresh token using the matching OAuth client",
+                "invalid_client": "invalid_client: check the Gmail OAuth client ID and secret",
+                "unauthorized_client": "unauthorized_client: check the Gmail OAuth client configuration",
+                "insufficientPermissions": "insufficientPermissions: authorize the gmail.send scope",
+                "accessNotConfigured": "accessNotConfigured: enable Gmail API in the email OAuth project",
+                "dailyLimitExceeded": "dailyLimitExceeded: check the Google Cloud project's daily API quota",
+                "rateLimitExceeded": "rateLimitExceeded: the provider rate limit was reached",
+                "userRateLimitExceeded": "userRateLimitExceeded: the sender rate limit was reached",
+            }
+            hint = ""
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = None
+            if isinstance(payload, dict):
+                error = payload.get("error")
+                if isinstance(error, str):
+                    hint = hints.get(error, "")
+                elif isinstance(error, dict):
+                    errors = error.get("errors", [])
+                    for item in errors if isinstance(errors, list) else []:
+                        reason = item.get("reason") if isinstance(item, dict) else None
+                        if isinstance(reason, str) and reason in hints:
+                            hint = hints[reason]
+                            break
+            suffix = f" {hint}." if hint else ""
+            raise EmailDeliveryError(
+                f"Gmail API {stage} rejected request (HTTP {response.status_code}).{suffix}"
+            )
         invalid = False
         try:
             data = response.json()

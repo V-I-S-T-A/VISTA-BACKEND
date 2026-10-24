@@ -63,6 +63,33 @@ Deploy both Backend and Frontend for this action. No database migration is
 needed. Verify acceptance in the toast and actual arrival in the inbox/spam
 folder; acceptance does not guarantee delivery.
 
+## Diagnose a failed resend on Railway
+
+The `invitation_email_failed` response is generic: it does not establish that
+the refresh token expired. In Railway, select the **Backend** service, open
+**Variables**, and check `EMAIL_BACKEND` and the three `GMAIL_API_*` variables
+listed above. Local `.env` values do not establish what Railway is running.
+
+After deploying the diagnostic changes, retry once and open the Backend's
+deployment logs. Look for `Resend invitation failed for user`. The log includes
+the authorization/sending stage, HTTP status, and recognized provider reason,
+without raw provider messages or tokens:
+
+| Log reason | Action |
+| --- | --- |
+| `invalid_grant` | Reauthorize the sender in OAuth Playground using your own matching email OAuth client and offline access; replace `GMAIL_API_REFRESH_TOKEN` in Backend Variables and redeploy. |
+| `invalid_client` | Check that `GMAIL_API_CLIENT_ID` and `GMAIL_API_CLIENT_SECRET` belong to the client used to issue the refresh token. |
+| `insufficientPermissions` | Reauthorize the sender with `https://www.googleapis.com/auth/gmail.send`. |
+| `accessNotConfigured` | Enable Gmail API in the project owning the email OAuth client. |
+| `dailyLimitExceeded` or rate-limit reasons | Check the project's API quota and sender limits before retrying. |
+| `ImproperlyConfigured` | Check the selected email backend and its required Backend Variables. |
+| Request failed or timed out | Check service/network availability; delivery may be uncertain. |
+
+An unrecognized provider error retains its stage and HTTP status only. Unexpected
+exceptions log the exception type without its potentially sensitive message.
+The GUI keeps its generic error and the password transaction is rolled back.
+Do not change the separate Drive OAuth variables to repair Gmail sending.
+
 References:
 - https://developers.google.com/workspace/gmail/api/guides/sending
 - https://developers.google.com/oauthplayground/
