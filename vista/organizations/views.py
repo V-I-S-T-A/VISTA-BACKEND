@@ -22,7 +22,7 @@ class OrganizationViewSet(viewsets.ModelViewSet):
     filterset_class = OrganizationFilter
     search_fields = ["name", "acronym"]
     ordering_fields = ["name", "created_at"]
-    ordering = ["-created_at"]
+    ordering = ["-created_at", "-org_id"]
 
     def get_serializer_class(self):
         if self.action == "list":
