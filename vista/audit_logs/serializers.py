@@ -84,6 +84,11 @@ class AuditLogListSerializer(serializers.ModelSerializer):
         return "Automated Process"
 
 
+class AuditLogSummarySerializer(AuditLogListSerializer):
+    class Meta(AuditLogListSerializer.Meta):
+        fields = [field for field in AuditLogListSerializer.Meta.fields if field != "changes"]
+
+
 class AuditLogCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = AuditLog

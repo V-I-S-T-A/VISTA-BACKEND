@@ -1,4 +1,5 @@
 from datetime import datetime
+from django.db.models import Count, Q
 
 from django.http import FileResponse
 from rest_framework import viewsets, status
@@ -50,7 +51,7 @@ class UserViewSet(viewsets.ModelViewSet):
     filterset_class = UserFilter
     search_fields = ["first_name", "last_name", "email"]
     ordering_fields = ["first_name", "last_name", "email", "role", "created_at"]
-    ordering = ["-created_at"]
+    ordering = ["-created_at", "-user_id"]
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -64,9 +65,19 @@ class UserViewSet(viewsets.ModelViewSet):
             return [IsAuthenticated(), IsAdmin()]
         if self.action in ("update", "partial_update", "retrieve"):
             return [IsAuthenticated(), IsSelfOrAdmin()]
-        if self.action in ("list", "export_list"):
+        if self.action in ("list", "export_list", "summary"):
             return [IsAuthenticated(), IsAdminOrStaff()]
         return [IsAuthenticated()]
+
+    @action(detail=False, methods=["get"])
+    def summary(self, request):
+        queryset = self.filter_queryset(self.get_queryset())
+        return Response(queryset.aggregate(
+            total=Count("pk"),
+            staff=Count("pk", filter=Q(role="staff")),
+            students=Count("pk", filter=Q(role="student")),
+            inactive=Count("pk", filter=Q(is_active=False)),
+        ))
 
     def perform_destroy(self, instance):
         if instance.pk == self.request.user.pk:
