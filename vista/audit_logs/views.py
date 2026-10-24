@@ -4,13 +4,13 @@ from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 
 from .models import AuditLog
-from .serializers import AuditLogSerializer, AuditLogListSerializer
+from .serializers import AuditLogSerializer, AuditLogListSerializer, AuditLogSummarySerializer
 from .filters import AuditLogFilter
 from vista.pagination import StandardResultsPagination
 from submissions.models import Submission
 
 class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = AuditLog.objects.all().select_related("user_id")
+    queryset = AuditLog.objects.all().select_related("user_id__org_id")
     lookup_field = "audit_id"
     permission_classes = [IsAuthenticated]
     pagination_class = StandardResultsPagination
@@ -18,16 +18,20 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_class = AuditLogFilter
     search_fields = ["user_id__first_name", "user_id__last_name", "user_id__email", "table_name"]
     ordering_fields = ["performed_at", "action", "table_name"]
-    ordering = ["-performed_at"]
+    ordering = ["-performed_at", "-audit_id"]
 
     def get_serializer_class(self):
         if self.action == "list":
+            if self.request.query_params.get("compact") == "true":
+                return AuditLogSummarySerializer
             return AuditLogListSerializer
         return AuditLogSerializer
 
     def get_queryset(self):
         user = self.request.user
-        queryset = AuditLog.objects.all().select_related("user_id")
+        queryset = super().get_queryset()
+        if self.action == "list" and self.request.query_params.get("compact") == "true":
+            queryset = queryset.defer("changes")
 
         if not user or not user.is_authenticated:
             return queryset.none()
