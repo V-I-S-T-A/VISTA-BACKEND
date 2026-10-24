@@ -5,6 +5,8 @@ from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from vista.email_backend import EmailDeliveryError
+
 from .models import User
 
 
@@ -47,6 +49,25 @@ class ResendInvitationTests(TestCase):
                 self.assertNotIn("private provider details", str(response.data))
                 self.user.refresh_from_db()
                 self.assertEqual(self.user.password, original_hash)
+
+    @patch("users.views.send_welcome_email")
+    def test_logs_safe_delivery_reason_but_keeps_client_response_generic(self, send):
+        send.side_effect = EmailDeliveryError("Gmail API authorization rejected request (HTTP 400). invalid_grant.")
+        with self.assertLogs("users.views", level="WARNING") as logs:
+            response = self.client.post(self.url)
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("invalid_grant", " ".join(logs.output))
+        self.assertNotIn("invalid_grant", str(response.data))
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("OriginalPassword123!"))
+
+    @patch("users.views.send_welcome_email", side_effect=RuntimeError("private provider details"))
+    def test_unexpected_error_logs_type_without_private_details(self, send):
+        with self.assertLogs("users.views", level="WARNING") as logs:
+            response = self.client.post(self.url)
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("RuntimeError", " ".join(logs.output))
+        self.assertNotIn("private provider details", " ".join(logs.output))
 
     @patch("users.views.send_welcome_email")
     def test_only_admin_can_resend(self, send):

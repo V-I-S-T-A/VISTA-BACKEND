@@ -69,6 +69,50 @@ class GmailBackendTests(SimpleTestCase):
             with self.assertRaises(EmailDeliveryError):
                 send_mail("Subject", "Body", None, ["to@example.com"])
 
+    @patch("vista.gmail_backend.requests.post")
+    def test_authorization_failure_identifies_cause_without_provider_details(self, post):
+        post.return_value = Mock(status_code=400, json=lambda: {
+            "error": "invalid_grant", "error_description": "private-token-and-account",
+        })
+        with self.assertRaisesRegex(EmailDeliveryError, "authorization.*invalid_grant") as caught:
+            send_mail("Subject", "Body", None, ["to@example.com"])
+        self.assertNotIn("private-token-and-account", str(caught.exception))
+        self.assertEqual(post.call_count, 1)
+
+    @patch("vista.gmail_backend.requests.post")
+    def test_send_permission_failure_is_sanitized(self, post):
+        post.side_effect = [
+            Mock(status_code=200, json=lambda: {"access_token": "token"}),
+            Mock(status_code=403, json=lambda: {"error": {
+                "message": "private-body",
+                "errors": [{"reason": "insufficientPermissions", "message": "private-message"}],
+            }}),
+        ]
+        with self.assertRaisesRegex(EmailDeliveryError, "sending.*gmail.send") as caught:
+            send_mail("Subject", "Body", None, ["to@example.com"])
+        self.assertNotIn("private", str(caught.exception))
+
+    @patch("vista.gmail_backend.requests.post")
+    def test_unknown_or_malformed_error_body_stays_private(self, post):
+        for payload in (
+            {"error": "private-provider-detail"},
+            {"error": {"errors": [{"reason": "private-provider-detail"}]}},
+            {"error": {"errors": [{"reason": ["invalid_grant"]}]}},
+            {"error": {"errors": "private-provider-detail"}},
+            [],
+        ):
+            with self.subTest(payload=payload):
+                post.return_value = Mock(status_code=403, json=lambda: payload)
+                with self.assertRaises(EmailDeliveryError) as caught:
+                    send_mail("Subject", "Body", None, ["to@example.com"])
+                self.assertNotIn("private", str(caught.exception))
+                self.assertNotIn("invalid_grant", str(caught.exception))
+        post.return_value = Mock(status_code=502)
+        post.return_value.json.side_effect = ValueError("private-response")
+        with self.assertRaisesRegex(EmailDeliveryError, "HTTP 502") as caught:
+            send_mail("Subject", "Body", None, ["to@example.com"])
+        self.assertIsNone(caught.exception.__context__)
+
     @override_settings(GMAIL_API_REFRESH_TOKEN="")
     @patch("vista.gmail_backend.requests.post")
     def test_missing_credentials_fail_before_network(self, post):

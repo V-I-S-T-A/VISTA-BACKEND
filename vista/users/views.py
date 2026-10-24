@@ -138,13 +138,18 @@ class UserViewSet(viewsets.ModelViewSet):
                 user.save(update_fields=["password"])
                 try:
                     sent = send_welcome_email(user, password)
-                except Exception:
+                except EmailDeliveryError:
+                    # Our email backends sanitize these messages for logging.
+                    raise
+                except Exception as exc:
                     # Do not expose provider responses or credentials to the client.
-                    raise EmailDeliveryError("Invitation email failed.") from None
+                    raise EmailDeliveryError(
+                        f"Invitation email failed ({type(exc).__name__}); check the email backend configuration."
+                    ) from None
                 if sent != 1:
                     raise EmailDeliveryError("Invitation email was not accepted.")
-        except EmailDeliveryError:
-            logger.warning("Resend invitation failed for user %s", target.pk)
+        except EmailDeliveryError as exc:
+            logger.warning("Resend invitation failed for user %s: %s", target.pk, exc)
             return Response(
                 {"code": "invitation_email_failed", "detail": "The invitation could not be sent. Ask your system administrator to check the email service and renew the Gmail authorization token if needed. The existing password has not changed. You can try again after the email service is restored."},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
