@@ -1,5 +1,6 @@
 from datetime import datetime
 from django.db.models import Count, Q
+from django.db import transaction
 
 from django.http import FileResponse
 from rest_framework import viewsets, status
@@ -24,6 +25,7 @@ from .serializers import (
     LoginSerializer,
     PasswordResetRequestSerializer,
     PasswordResetConfirmSerializer,
+    generate_temp_password,
 )
 from .permissions import IsAdmin, IsSelfOrAdmin, IsAdminOrStaff
 from .filters import UserFilter
@@ -37,6 +39,7 @@ from audit_logs.utility import log_create, log_update, log_delete, log_login, lo
 from .models import PasswordChangeCode
 from .serializers import ConfirmPasswordChangeSerializer
 from .emails import send_welcome_email, send_password_code_email
+from vista.email_backend import EmailDeliveryError
 
 import logging
 
@@ -61,7 +64,7 @@ class UserViewSet(viewsets.ModelViewSet):
         return UserSerializer
 
     def get_permissions(self):
-        if self.action in ("create", "destroy"):
+        if self.action in ("create", "destroy", "resend_invitation"):
             return [IsAuthenticated(), IsAdmin()]
         if self.action in ("update", "partial_update", "retrieve"):
             return [IsAuthenticated(), IsSelfOrAdmin()]
@@ -117,6 +120,36 @@ class UserViewSet(viewsets.ModelViewSet):
                 instance, "_welcome_email_sent", False
             )
         return response
+
+    @action(detail=True, methods=["post"], url_path="resend-invitation")
+    def resend_invitation(self, request, *args, **kwargs):
+        target = self.get_object()
+        try:
+            with transaction.atomic():
+                # Lock only the user table: the usual queryset joins a nullable organization.
+                user = User.objects.select_for_update().get(pk=target.pk)
+                if not user.is_active or user.last_login is not None or not user.must_change_password:
+                    return Response(
+                        {"detail": "Invitations can only be resent to active accounts that have not signed in and still require a temporary password."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                password = generate_temp_password()
+                user.set_password(password)
+                user.save(update_fields=["password"])
+                try:
+                    sent = send_welcome_email(user, password)
+                except Exception:
+                    # Do not expose provider responses or credentials to the client.
+                    raise EmailDeliveryError("Invitation email failed.") from None
+                if sent != 1:
+                    raise EmailDeliveryError("Invitation email was not accepted.")
+        except EmailDeliveryError:
+            logger.warning("Resend invitation failed for user %s", target.pk)
+            return Response(
+                {"code": "invitation_email_failed", "detail": "The invitation could not be sent. Ask your system administrator to check the email service and renew the Gmail authorization token if needed. The existing password has not changed. You can try again after the email service is restored."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return Response({"detail": "Invitation accepted for sending with a new temporary password. Ask the user to check their inbox or spam folder and use the newest invitation."})
 
     #  Override perform_update ---
     def perform_update(self, serializer):

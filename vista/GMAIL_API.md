@@ -44,6 +44,25 @@ Gmail sending limits still apply. Requests have bounded connection/read
 timeouts and no automatic retries to avoid duplicate messages after an
 ambiguous network failure. Error logs omit provider response bodies and tokens.
 
+## Resend a missed invitation
+
+After restoring the sender's Gmail authorization, open Admin > User Management
+and choose **Resend invitation** on the affected user's row. Confirm the email
+address in the prompt. The action is available only for active accounts that
+have never signed in and still require a temporary password.
+
+The admin-only `POST /api/users/{user_id}/resend-invitation/` endpoint sends a
+new temporary password and replaces the old password when sending is accepted.
+The user should use the newest invitation. Failed sends return HTTP 503 with
+`code: invitation_email_failed`; the password change is rolled back so the
+administrator can retry after fixing the email service. Invitations are not
+retried automatically. A timeout can leave delivery uncertain; an email that
+arrives from a failed attempt may contain an unusable password.
+
+Deploy both Backend and Frontend for this action. No database migration is
+needed. Verify acceptance in the toast and actual arrival in the inbox/spam
+folder; acceptance does not guarantee delivery.
+
 References:
 - https://developers.google.com/workspace/gmail/api/guides/sending
 - https://developers.google.com/oauthplayground/
