@@ -308,6 +308,12 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
         urls = self._upload_to_cloudinary(uploaded_files) if replaces_documents else []
 
         with transaction.atomic():
+            active_file_names = list(
+                Document.objects.filter(submission_id=instance, is_current=True)
+                .order_by("uploaded_at")
+                .values_list("file_name", flat=True)
+            )
+            attachment_change = {}
             update_fields = ["updated_at"]
             if "status" in validated_data:
                 instance.status = new_status
@@ -316,21 +322,38 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
                 instance.priority_escalation = validated_data["priority_escalation"]
                 update_fields.append("priority_escalation")
             instance.save(update_fields=update_fields)
-            if new_status != old_status:
-                ReviewLog.objects.create(
-                    submission_id=instance,
-                    changed_by=request.user,
-                    remarks_text=remarks_text,
-                    old_status=old_status,
-                    new_status=new_status,
-                )
             if replaces_documents:
+                attachment_change = {
+                    "action": "replaced",
+                    "previous_files": active_file_names,
+                    "new_files": [payload.name for payload in payloads],
+                }
                 self._replace_documents(instance, payloads, urls)
             if attachment:
+                attachment_change = {
+                    "action": "added" if attachment_action == "add" else "replaced",
+                    "previous_files": active_file_names if attachment_action == "replace" else [],
+                    "new_files": [attachment["file_name"]],
+                }
                 self._save_attachment(instance, attachment_action, attachment)
             if new_status == Submission.STATUS_REJECTED:
                 # Retain the historical records, but detach them from the active entry.
                 Document.objects.filter(submission_id=instance, is_current=True).update(is_current=False)
+                if active_file_names and not attachment_change:
+                    attachment_change = {
+                        "action": "detached",
+                        "previous_files": active_file_names,
+                        "new_files": [],
+                    }
+            if new_status != old_status or attachment_change:
+                ReviewLog.objects.create(
+                    submission_id=instance,
+                    changed_by=request.user,
+                    remarks_text=remarks_text,
+                    attachment_change=attachment_change,
+                    old_status=old_status,
+                    new_status=new_status,
+                )
             if new_status != old_status and instance.submitted_by and instance.submitted_by.role == "student":
                 Notification.objects.create(
                     user_id=instance.submitted_by,
@@ -339,9 +362,18 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
                     type="submission_status_changed",
                     message=f"{instance.title} is now {new_status.replace('_', ' ').title()}.",
                 )
+            priority_notification_exists = (
+                Notification.objects.filter(
+                    user_id=instance.submitted_by,
+                    submission_id=instance,
+                    type="submission_priority_changed",
+                ).exists()
+                if instance.submitted_by and instance.submitted_by.role == "student"
+                else True
+            )
             if (
-                not old_priority_escalation
-                and instance.priority_escalation
+                instance.priority_escalation
+                and (not old_priority_escalation or not priority_notification_exists)
                 and instance.submitted_by
                 and instance.submitted_by.role == "student"
             ):

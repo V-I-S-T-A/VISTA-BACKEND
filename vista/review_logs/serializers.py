@@ -15,6 +15,6 @@ class ReviewLogSerializer(serializers.ModelSerializer):
         model = ReviewLog
         fields = [
             "log_id", "submission_id", "submission_title", "changed_by", "changed_by_name",
-            "changed_by_image_url", "remarks_text", "old_status", "new_status", "changed_at",
+            "changed_by_image_url", "remarks_text", "attachment_change", "old_status", "new_status", "changed_at",
         ]
         read_only_fields = fields

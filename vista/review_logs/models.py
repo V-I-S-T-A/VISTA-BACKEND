@@ -9,6 +9,7 @@ class ReviewLog(models.Model):
     submission_id = models.ForeignKey(Submission, on_delete=models.CASCADE, db_column="submission_id")
     changed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, db_column="changed_by")
     remarks_text = models.TextField(blank=True)
+    attachment_change = models.JSONField(default=dict, blank=True)
     old_status = models.CharField(max_length=50)
     new_status = models.CharField(max_length=50)
     changed_at = models.DateTimeField(auto_now_add=True)
