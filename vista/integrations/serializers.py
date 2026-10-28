@@ -1,5 +1,23 @@
 from rest_framework import serializers
-from .models import GoogleDriveConnection
+from .models import DriveArchive, GoogleDriveConnection
+
+
+class DriveArchiveSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DriveArchive
+        fields = [
+            "archive_id",
+            "drive_file_id",
+            "file_name",
+            "drive_view_link",
+            "root_folder_id",
+            "root_folder_name",
+            "target_folder_id",
+            "folder_path",
+            "upload_kind",
+            "archived_at",
+        ]
+        read_only_fields = fields
 
 
 class GoogleDriveConnectionSerializer(serializers.ModelSerializer):

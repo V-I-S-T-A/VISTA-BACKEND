@@ -60,3 +60,50 @@ class GoogleDriveConnection(models.Model):
     @refresh_token.setter
     def refresh_token(self, value):
         self._refresh_token = _fernet().encrypt(value.encode()).decode()
+
+
+class DriveArchive(models.Model):
+    UPLOAD_KIND_CHOICES = (
+        ("approved", "Approved document"),
+        ("report", "Accomplishment report"),
+    )
+
+    archive_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    submission = models.ForeignKey(
+        "submissions.Submission",
+        on_delete=models.CASCADE,
+        related_name="drive_archives",
+        db_column="submission_id",
+    )
+    archived_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="drive_archives",
+    )
+    drive_file_id = models.CharField(max_length=255)
+    file_name = models.CharField(max_length=255)
+    drive_view_link = models.URLField(max_length=1000, blank=True)
+    root_folder_id = models.CharField(max_length=255, blank=True)
+    root_folder_name = models.CharField(max_length=255, blank=True)
+    target_folder_id = models.CharField(max_length=255, blank=True)
+    folder_path = models.JSONField(default=list, blank=True)
+    upload_kind = models.CharField(max_length=20, choices=UPLOAD_KIND_CHOICES)
+    archived_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "tbl_Drive_Archives"
+        ordering = ["-archived_at"]
+        indexes = [
+            models.Index(fields=["submission", "archived_at"], name="drive_arch_sub_date_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["submission", "drive_file_id"],
+                name="drive_arch_submission_file_uniq",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.file_name} -> Google Drive ({self.drive_file_id})"

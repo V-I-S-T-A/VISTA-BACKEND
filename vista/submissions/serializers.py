@@ -35,6 +35,7 @@ class SubmissionSerializer(serializers.ModelSerializer):
     doc_type_name = serializers.CharField(source="doc_type_id.name", read_only=True)
     academic_year = serializers.CharField(source="academic_year_id.year", read_only=True)
     documents = serializers.SerializerMethodField()
+    drive_archives = serializers.SerializerMethodField()
     is_accomplishment_report = serializers.BooleanField(read_only=True)
 
     class Meta:
@@ -59,6 +60,7 @@ class SubmissionSerializer(serializers.ModelSerializer):
             "submitted_at",
             "updated_at",
             "documents",
+            "drive_archives",
             "is_accomplishment_report",
         ]
         read_only_fields = ["submission_id", "submitted_by", "status", "submitted_at", "updated_at", "is_accomplishment_report"]
@@ -77,6 +79,16 @@ class SubmissionSerializer(serializers.ModelSerializer):
         # Fetch all documents where submission_id matches this submission, and it is the current version
         docs = Document.objects.filter(submission_id=obj, is_current=True)
         return DocumentSerializer(docs, many=True).data
+
+    def get_drive_archives(self, obj):
+        request = self.context.get("request")
+        if request and getattr(request.user, "role", None) == "student":
+            return []
+
+        from integrations.serializers import DriveArchiveSerializer
+
+        archives = obj.drive_archives.all()
+        return DriveArchiveSerializer(archives, many=True).data
 
 
 class SubmissionListSerializer(serializers.ModelSerializer):
