@@ -213,7 +213,57 @@ def send_status_change_email(submission, old_status, new_status, remarks_text=""
         _build_html_body(submission, name, new_status, remarks, date_str),
         "text/html",
     )
-    message.send(fail_silently=False)
+    sent = message.send(fail_silently=False)
+    if sent != 1:
+        logger.warning(
+            "Status-change email was not accepted by the configured email backend for submission %s.",
+            submission.submission_id,
+        )
+    return sent
+
+
+def send_priority_change_email(submission):
+    """Email the submitter when staff newly marks a submission as priority."""
+    submitted_by = getattr(submission, "submitted_by", None)
+    recipient = getattr(submitted_by, "email", None)
+    if not recipient:
+        logger.warning(
+            "Skipping priority email for submission %s: no submitted_by email on file.",
+            submission.submission_id,
+        )
+        return 0
+
+    name = submitted_by.get_full_name() or recipient
+    submission_url = _submission_url(submission)
+    safe_title = escape(submission.title)
+    safe_url = escape(submission_url, quote=True)
+    message = EmailMultiAlternatives(
+        subject=f'VISTA: "{submission.title}" has been marked as a priority',
+        body=(
+            f"Dear {name},\n\n"
+            f'Your submission, "{submission.title}", has been marked as a priority by VISTA staff.\n\n'
+            f"View this submission: {submission_url}\n\n"
+            "Office of Student Affairs\n"
+            "This is an automated message. Please do not reply."
+        ),
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        to=[recipient],
+    )
+    message.attach_alternative(
+        f'<!doctype html><html><body><p>Dear {escape(name)},</p>'
+        f'<p>Your submission, <strong>&ldquo;{safe_title}&rdquo;</strong>, has been marked as a priority by VISTA staff.</p>'
+        f'<p><a href="{safe_url}">View this submission</a></p>'
+        "<p>Office of Student Affairs</p>"
+        "<small>This is an automated message. Please do not reply.</small></body></html>",
+        "text/html",
+    )
+    sent = message.send(fail_silently=False)
+    if sent != 1:
+        logger.warning(
+            "Priority email was not accepted by the configured email backend for submission %s.",
+            submission.submission_id,
+        )
+    return sent
 
 
 def _submission_url(submission):

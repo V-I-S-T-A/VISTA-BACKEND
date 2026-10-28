@@ -3,7 +3,7 @@ from users.models import User
 from .models import Submission
 from documents.models import Document
 from documents.serializers import DocumentSerializer # Ensure you import this!
-from .emails import send_status_change_email
+from .emails import send_priority_change_email, send_status_change_email
 from notifications.models import Notification
 import logging
 from typing import NamedTuple
@@ -298,6 +298,7 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
         validated_data.pop("drive_folder_id", None)  # The selected folder is used as the archive root.
         old_status, new_status = instance.status, validated_data.get("status", instance.status)
         old_priority_escalation = instance.priority_escalation
+        priority_was_added = False
 
         payloads = [self._to_payload(f) for f in uploaded_files]
         report_payloads = [self._to_payload(f) for f in report_files]
@@ -321,6 +322,7 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
             if "priority_escalation" in validated_data:
                 instance.priority_escalation = validated_data["priority_escalation"]
                 update_fields.append("priority_escalation")
+                priority_was_added = instance.priority_escalation and not old_priority_escalation
             instance.save(update_fields=update_fields)
             if replaces_documents:
                 attachment_change = {
@@ -362,18 +364,8 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
                     type="submission_status_changed",
                     message=f"{instance.title} is now {new_status.replace('_', ' ').title()}.",
                 )
-            priority_notification_exists = (
-                Notification.objects.filter(
-                    user_id=instance.submitted_by,
-                    submission_id=instance,
-                    type="submission_priority_changed",
-                ).exists()
-                if instance.submitted_by and instance.submitted_by.role == "student"
-                else True
-            )
             if (
-                instance.priority_escalation
-                and (not old_priority_escalation or not priority_notification_exists)
+                priority_was_added
                 and instance.submitted_by
                 and instance.submitted_by.role == "student"
             ):
@@ -396,6 +388,15 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
             except Exception:
                 logger.exception(
                     "Failed to send status-change email for submission %s",
+                    instance.submission_id,
+                )
+
+        if priority_was_added and instance.submitted_by and instance.submitted_by.role == "student":
+            try:
+                send_priority_change_email(instance)
+            except Exception:
+                logger.exception(
+                    "Failed to send priority email for submission %s",
                     instance.submission_id,
                 )
 
@@ -513,6 +514,8 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
             else:
                 batches = [(approved_payloads or self._download_current_documents(submission), False)]
 
+            from integrations.models import DriveArchive
+
             uploaded_names, failed_names = [], []
             for payloads, approved_copy in batches:
                 if not payloads:
@@ -521,10 +524,57 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
                     connection, submission, approved_copy=approved_copy,
                     base_folder_id=base_folder_id,
                 )
-                uploaded, failed = google_client.upload_files_to_folder(connection, folder["id"], payloads)
-                logger.info("Drive sync to %s: %d uploaded, %d failed", path, len(uploaded), len(failed))
-                uploaded_names.extend(uploaded)
-                failed_names.extend(failed)
+                for payload in payloads:
+                    try:
+                        drive_file = google_client.upload_file_to_folder(
+                            connection=connection,
+                            folder_id=folder["id"],
+                            file_name=payload.name,
+                            file_bytes=payload.content,
+                            mime_type=payload.mime_type,
+                        )
+                        drive_file_id = drive_file.get("id") if drive_file else None
+                        if not drive_file_id:
+                            raise ValueError("Google Drive did not return a file ID.")
+
+                        is_report = submission.is_accomplishment_report and not approved_copy
+                        root_folder_id = base_folder_id or connection.folder_id or folder["id"]
+                        root_folder_name = (
+                            "Selected Drive folder"
+                            if base_folder_id and base_folder_id != connection.folder_id
+                            else connection.folder_name or "Configured Drive folder"
+                        )
+                        DriveArchive.objects.update_or_create(
+                            submission=submission,
+                            drive_file_id=drive_file_id,
+                            defaults={
+                                "archived_by": user,
+                                "file_name": payload.name,
+                                "drive_view_link": drive_file.get("webViewLink") or "",
+                                "root_folder_id": root_folder_id,
+                                "root_folder_name": root_folder_name,
+                                "target_folder_id": folder["id"],
+                                "folder_path": path or [],
+                                "upload_kind": "report" if is_report else "approved",
+                            },
+                        )
+                        uploaded_names.append(payload.name)
+                    except google_client.DriveAuthExpired:
+                        raise
+                    except Exception:
+                        logger.exception(
+                            "Drive upload or archive-location save failed for %s on submission %s",
+                            payload.name,
+                            submission.submission_id,
+                        )
+                        failed_names.append(payload.name)
+
+                logger.info(
+                    "Drive sync to %s: %d uploaded, %d failed",
+                    path,
+                    len(uploaded_names),
+                    len(failed_names),
+                )
 
             if uploaded_names and not failed_names:
                 connection.last_synced_at = timezone.now()

@@ -215,8 +215,13 @@ MEDIA_URL = '/media/'
 
 #change password 
 RESEND_API_KEY = config('RESEND_API_KEY', default='')
-EMAIL_BACKEND = (
-    config('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
+EMAIL_BACKEND = config(
+    'EMAIL_BACKEND',
+    default=(
+        'django.core.mail.backends.console.EmailBackend'
+        if DEBUG
+        else 'vista.gmail_backend.GmailAPIEmailBackend'
+    ),
 )
 GMAIL_API_CLIENT_ID = config('GMAIL_API_CLIENT_ID', default='')
 FRONTEND_URL = config('FRONTEND_URL', default='https://vista-ustp.up.railway.app')
