@@ -102,7 +102,8 @@ def _build_text_body(submission, name, new_status, remarks, date_str):
 
 
 def _build_html_body(submission, name, new_status, remarks, date_str):
-    submission_url = escape(_submission_url(submission), quote=True)
+    # Django's escape() already escapes quotes; it does not accept a `quote` kwarg.
+    submission_url = escape(_submission_url(submission))
     title = escape(submission.title)
     label = escape(_label(new_status))
     message = escape(STATUS_MESSAGES.get(new_status, ""))
@@ -236,7 +237,7 @@ def send_priority_change_email(submission):
     name = submitted_by.get_full_name() or recipient
     submission_url = _submission_url(submission)
     safe_title = escape(submission.title)
-    safe_url = escape(submission_url, quote=True)
+    safe_url = escape(submission_url)
     message = EmailMultiAlternatives(
         subject=f'VISTA: "{submission.title}" has been marked as a priority',
         body=(
