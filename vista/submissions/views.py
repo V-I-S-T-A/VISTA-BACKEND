@@ -1,11 +1,14 @@
 from datetime import datetime
 import platform
+from urllib.parse import urlparse
 
 from django.http import FileResponse
+from django.db import DatabaseError, transaction
 from rest_framework import viewsets, filters, status as http_status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import APIException
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django_filters.rest_framework import DjangoFilterBackend
 from django.core.files.uploadedfile import UploadedFile
@@ -36,9 +39,24 @@ from document_types.models import DocumentType
 from categories.models import Category
 from .ocr_autofill_pipeline import run_autofill_pipeline
 from academic_years.models import AcademicYear
+from documents.models import Document
+import cloudinary.api
+import cloudinary.uploader
 
 # Import Audit Log Utilities ---
 from audit_logs.utility import log_create, log_update, log_delete, log_status_change
+
+
+class SubmissionDeleteConflict(APIException):
+    status_code = http_status.HTTP_409_CONFLICT
+    default_detail = "This submission cannot be safely deleted with the available attachment metadata."
+    default_code = "submission_delete_conflict"
+
+
+class SubmissionDeleteStorageError(APIException):
+    status_code = http_status.HTTP_502_BAD_GATEWAY
+    default_detail = "VISTA could not safely remove the associated Cloudinary attachments."
+    default_code = "submission_attachment_delete_failed"
 
 
 # --- OCR autofill helpers -----------------------------------------------
@@ -187,16 +205,179 @@ class SubmissionViewSet(viewsets.ModelViewSet):
             new_data={"status": instance.status}
         )
 
-    # Add tracking to perform_destroy ---
-    def perform_destroy(self, instance):
-        title = instance.title
-        instance.is_active = False
-        instance.save(update_fields=["is_active"])
-        log_delete(
-            user=self.request.user,
-            table_name="tbl_Submissions",
-            old_data={"title": title, "submission_id": str(instance.submission_id)}
-        )
+    def destroy(self, request, *args, **kwargs):
+        submission = self.get_object()
+        if request.data.get("confirmation") != "DELETE":
+            return Response(
+                {"detail": "Type DELETE exactly to confirm permanent removal."},
+                status=http_status.HTTP_400_BAD_REQUEST,
+            )
+        reason_type = request.data.get("reason_type")
+        reason_details = (request.data.get("reason_details") or "").strip()
+        reason_labels = {
+            "duplicate": "Duplicate submission",
+            "incorrect": "Incorrectly created entry",
+            "other": "Other reason",
+        }
+        if reason_type not in reason_labels:
+            return Response(
+                {"detail": "Choose a valid reason for deleting this submission."},
+                status=http_status.HTTP_400_BAD_REQUEST,
+            )
+        if reason_type == "other" and not reason_details:
+            return Response(
+                {"detail": "Enter an explanation for the selected Other reason."},
+                status=http_status.HTTP_400_BAD_REQUEST,
+            )
+        if len(reason_details) > 500:
+            return Response(
+                {"detail": "The deletion explanation must be 500 characters or fewer."},
+                status=http_status.HTTP_400_BAD_REQUEST,
+            )
+        deletion_reason = reason_labels[reason_type]
+        if reason_type == "other":
+            deletion_reason = f"{deletion_reason}: {reason_details}"
+
+        removed_cloudinary_assets = 0
+        try:
+            with transaction.atomic():
+                locked_submission = Submission.objects.select_for_update().get(
+                    submission_id=submission.submission_id
+                )
+                documents = list(Document.objects.filter(submission_id=locked_submission))
+                cloudinary_assets = self._preflight_submission_assets(locked_submission, documents)
+
+                # External deletions happen only after every attachment has passed
+                # the identity, provider-URL, and shared-reference checks above.
+                for asset in cloudinary_assets:
+                    if not asset["exists"]:
+                        continue
+                    try:
+                        result = cloudinary.uploader.destroy(
+                            asset["public_id"],
+                            resource_type=asset["resource_type"],
+                            invalidate=True,
+                        )
+                    except Exception as exc:
+                        raise SubmissionDeleteStorageError({
+                            "detail": (
+                                f"Cloudinary removed {removed_cloudinary_assets} of "
+                                f"{len(cloudinary_assets)} associated VISTA attachments before an error. "
+                                "The submission record and its VISTA history were retained."
+                            ),
+                            "code": "partial_attachment_deletion" if removed_cloudinary_assets else "attachment_deletion_failed",
+                            "removed_attachments": removed_cloudinary_assets,
+                        }) from exc
+                    if result.get("result") == "ok":
+                        removed_cloudinary_assets += 1
+                    elif result.get("result") != "not found":
+                        raise SubmissionDeleteStorageError({
+                            "detail": (
+                                f"Cloudinary removed {removed_cloudinary_assets} of "
+                                f"{len(cloudinary_assets)} associated VISTA attachments. "
+                                "The submission record and its VISTA history were retained."
+                            ),
+                            "code": "partial_attachment_deletion" if removed_cloudinary_assets else "attachment_deletion_failed",
+                            "removed_attachments": removed_cloudinary_assets,
+                        })
+
+                log_delete(
+                    user=request.user,
+                    table_name="tbl_Submissions",
+                    old_data={
+                        "submission_id": str(locked_submission.submission_id),
+                        "reason": deletion_reason,
+                        "outcome": "deleted",
+                    },
+                )
+                locked_submission.delete()
+        except DatabaseError as exc:
+            if removed_cloudinary_assets:
+                detail = (
+                    f"Cloudinary attachments were deleted, but the submission record could not be deleted. "
+                    f"The submission and its history remain; {removed_cloudinary_assets} attachment(s) "
+                    "may no longer be available."
+                )
+            else:
+                detail = "The submission could not be deleted because its database transaction failed. No VISTA records were removed."
+            raise SubmissionDeleteStorageError({
+                "detail": detail,
+                "code": "database_delete_failed",
+                "removed_attachments": removed_cloudinary_assets,
+            }) from exc
+
+        return Response(status=http_status.HTTP_204_NO_CONTENT)
+
+    @staticmethod
+    def _preflight_submission_assets(submission, documents):
+        assets_by_identity = {}
+        for document in documents:
+            parsed = urlparse(document.file_url or "")
+            host = (parsed.hostname or "").lower()
+            if host == "res.cloudinary.com":
+                public_id = document.cloudinary_public_id
+                resource_type = document.cloudinary_resource_type
+                if not public_id or resource_type not in ("image", "video", "raw"):
+                    raise SubmissionDeleteConflict({
+                        "detail": (
+                            f"Attachment '{document.file_name}' has no verified Cloudinary asset identity. "
+                            "Nothing was deleted. This legacy attachment must be reconciled before the submission can be removed."
+                        ),
+                        "code": "unverified_cloudinary_asset",
+                    })
+                if Document.objects.filter(
+                    cloudinary_public_id=public_id,
+                    cloudinary_resource_type=resource_type,
+                ).exclude(submission_id=submission).exists() or Document.objects.filter(
+                    file_url=document.file_url,
+                ).exclude(submission_id=submission).exists():
+                    raise SubmissionDeleteConflict({
+                        "detail": (
+                            f"Attachment '{document.file_name}' is referenced by another submission. "
+                            "Nothing was deleted."
+                        ),
+                        "code": "shared_cloudinary_asset",
+                    })
+                assets_by_identity[(public_id, resource_type)] = document.file_url
+            elif host.endswith("google.com") or host.endswith("googleusercontent.com"):
+                # Google Drive archives are retained; only VISTA's association row is removed.
+                continue
+            else:
+                raise SubmissionDeleteConflict({
+                    "detail": (
+                        f"Attachment '{document.file_name}' uses an unrecognized storage location. "
+                        "Nothing was deleted."
+                    ),
+                    "code": "unknown_attachment_storage",
+                })
+
+        verified_assets = []
+        for (public_id, resource_type), file_url in assets_by_identity.items():
+            try:
+                resource = cloudinary.api.resource(public_id, resource_type=resource_type)
+            except Exception as exc:
+                if getattr(exc, "http_code", None) == 404:
+                    verified_assets.append({
+                        "public_id": public_id,
+                        "resource_type": resource_type,
+                        "exists": False,
+                    })
+                    continue
+                raise SubmissionDeleteStorageError({
+                    "detail": "VISTA could not verify every Cloudinary attachment. No attachments or submission records were deleted.",
+                    "code": "cloudinary_verification_failed",
+                }) from exc
+            if resource.get("public_id") != public_id or resource.get("resource_type") != resource_type or resource.get("secure_url") != file_url:
+                raise SubmissionDeleteConflict({
+                    "detail": "A Cloudinary attachment identity did not match its VISTA record. Nothing was deleted.",
+                    "code": "cloudinary_identity_mismatch",
+                })
+            verified_assets.append({
+                "public_id": public_id,
+                "resource_type": resource_type,
+                "exists": True,
+            })
+        return verified_assets
 
     # Add tracking to change_status ---
     @action(
@@ -217,13 +398,14 @@ class SubmissionViewSet(viewsets.ModelViewSet):
 
 
         # Log the specific status change
-        log_status_change(
-            user=request.user,
-            table_name="tbl_Submissions",
-            record_id=submission.submission_id,
-            old_status=old_status,
-            new_status=submission.status
-        )
+        if old_status != submission.status:
+            log_status_change(
+                user=request.user,
+                table_name="tbl_Submissions",
+                record_id=submission.submission_id,
+                old_status=old_status,
+                new_status=submission.status
+            )
 
         response_data = SubmissionSerializer(updated_submission).data
         if hasattr(updated_submission, "drive_sync_result"):
