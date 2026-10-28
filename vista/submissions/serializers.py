@@ -334,6 +334,7 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
                 Notification.objects.create(
                     user_id=instance.submitted_by,
                     submission_id=instance,
+                    actor=request.user,
                     type="submission_status_changed",
                     message=f"{instance.title} is now {new_status.replace('_', ' ').title()}.",
                 )
