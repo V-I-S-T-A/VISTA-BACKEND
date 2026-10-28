@@ -57,13 +57,14 @@ class SubmissionSerializer(serializers.ModelSerializer):
             "title",
             "description",
             "status",
+            "priority_escalation",
             "submitted_at",
             "updated_at",
             "documents",
             "drive_archives",
             "is_accomplishment_report",
         ]
-        read_only_fields = ["submission_id", "submitted_by", "status", "submitted_at", "updated_at", "is_accomplishment_report"]
+        read_only_fields = ["submission_id", "submitted_by", "status", "priority_escalation", "submitted_at", "updated_at", "is_accomplishment_report"]
 
     # NEW: Define the function that grabs the documents
     def get_documents(self, obj):
@@ -107,6 +108,7 @@ class SubmissionListSerializer(serializers.ModelSerializer):
             "submission_id",
             "title",
             "status",
+            "priority_escalation",
             "academic_year",
             "submitted_by_name",
             "submitted_by_email",
@@ -191,7 +193,7 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Submission
-        fields = ["status", "remarks_text", "files", "report_files", "drive_folder_id", "attachment_action", "attachment"]
+        fields = ["status", "priority_escalation", "remarks_text", "files", "report_files", "drive_folder_id", "attachment_action", "attachment"]
 
     def validate(self, attrs):
         attachment_action = attrs.get("attachment_action")
@@ -294,7 +296,7 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
         attachment = validated_data.pop("attachment", None)
         drive_folder_id = self.initial_data.get("drive_folder_id", "")
         validated_data.pop("drive_folder_id", None)  # The selected folder is used as the archive root.
-        old_status, new_status = instance.status, validated_data["status"]
+        old_status, new_status = instance.status, validated_data.get("status", instance.status)
 
         payloads = [self._to_payload(f) for f in uploaded_files]
         report_payloads = [self._to_payload(f) for f in report_files]
@@ -305,8 +307,14 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
         urls = self._upload_to_cloudinary(uploaded_files) if replaces_documents else []
 
         with transaction.atomic():
-            instance.status = new_status
-            instance.save(update_fields=["status", "updated_at"])
+            update_fields = ["updated_at"]
+            if "status" in validated_data:
+                instance.status = new_status
+                update_fields.append("status")
+            if "priority_escalation" in validated_data:
+                instance.priority_escalation = validated_data["priority_escalation"]
+                update_fields.append("priority_escalation")
+            instance.save(update_fields=update_fields)
             if new_status != old_status:
                 ReviewLog.objects.create(
                     submission_id=instance,
