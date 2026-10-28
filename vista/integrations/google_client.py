@@ -1,5 +1,6 @@
 import io
 from datetime import datetime, timezone
+import hashlib
 
 from django.conf import settings
 from google.oauth2.credentials import Credentials
@@ -156,6 +157,26 @@ def ensure_folder_path(connection, base_folder_id, path_segments):
 
 
 def _upload(service, folder_id, file_name, file_bytes, mime_type):
+    # Avoid duplicate Drive copies when the same approved file is re-queued.
+    safe_name = file_name.replace("\\", "\\\\").replace("'", "\\'")
+    query = f"'{folder_id}' in parents and name = '{safe_name}' and trashed = false"
+    checksum = hashlib.md5(file_bytes).hexdigest()
+    page_token = None
+    while True:
+        params = {
+            "q": query,
+            "fields": "nextPageToken,files(id,name,webViewLink,md5Checksum)",
+            "pageSize": 100,
+        }
+        if page_token:
+            params["pageToken"] = page_token
+        existing_files = _execute(service.files().list(**params))
+        for existing in existing_files.get("files", []):
+            if existing.get("md5Checksum") == checksum:
+                return existing
+        page_token = existing_files.get("nextPageToken")
+        if not page_token:
+            break
     metadata = {"name": file_name, "parents": [folder_id]}
     media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type, resumable=True)
     return _execute(service.files().create(body=metadata, media_body=media, fields="id, webViewLink"))

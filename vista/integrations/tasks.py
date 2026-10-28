@@ -1,9 +1,13 @@
 import logging
+from io import BytesIO
+from pathlib import Path
 
 from celery import shared_task
+from django.db import transaction
 from django.utils import timezone
+import cloudinary.uploader
 
-from .models import GoogleDriveConnection
+from .models import DriveArchive, GoogleDriveConnection
 from . import google_client
 from .google_client import DriveAuthExpired
 
@@ -221,30 +225,133 @@ def upload_document_to_drive(
         audit_result(result)
         return result
 
+    drive_file_id = uploaded.get("id")
+    if not drive_file_id:
+        result = {
+            "status": "error",
+            "code": "drive_file_identity_missing",
+            "detail": "The file reached Google Drive, but VISTA could not save its archive location because Drive returned no file ID.",
+            "drive_view_link": uploaded.get("webViewLink"),
+        }
+        audit_result(result)
+        return result
+
+    if use_auto_folder or not manual_folder_id:
+        root_folder_id = connection.folder_id or target_folder_id
+        root_folder_name = connection.folder_name or "Configured Drive folder"
+    else:
+        root_folder_id = manual_folder_id
+        root_folder_name = "Selected Drive folder"
+
+    archive, _ = DriveArchive.objects.update_or_create(
+        submission=submission,
+        drive_file_id=drive_file_id,
+        defaults={
+            "archived_by": staff_user,
+            "file_name": file_name,
+            "drive_view_link": uploaded.get("webViewLink") or "",
+            "root_folder_id": root_folder_id,
+            "root_folder_name": root_folder_name,
+            "target_folder_id": target_folder_id,
+            "folder_path": path_segments or [],
+            "upload_kind": upload_kind,
+        },
+    )
+    archive_data = {
+        "archive_id": str(archive.archive_id),
+        "root_folder_name": archive.root_folder_name,
+        "root_folder_id": archive.root_folder_id,
+        "target_folder_id": archive.target_folder_id,
+        "folder_path": archive.folder_path,
+        "file_name": archive.file_name,
+        "drive_view_link": archive.drive_view_link,
+    }
+
     document = None
     if upload_kind == "approved":
-        Document.objects.filter(submission_id=submission, is_current=True).update(is_current=False)
-        latest = Document.objects.filter(submission_id=submission).order_by("-version").first()
-        next_version = (latest.version + 1) if latest else 1
-        document = Document.objects.create(
-            submission_id=submission,
-            file_name=file_name,
-            file_url=uploaded.get("webViewLink", ""),
-            mime_type=mime_type,
-            file_size_kb=max(1, len(file_bytes) // 1024),
-            version=next_version,
-            is_current=True,
-        )
+        # Use the stable Drive identity as part of Cloudinary's public ID. If
+        # Celery retries after Drive succeeded, this replaces the same asset
+        # instead of creating a second Cloudinary object.
+        extension = Path(file_name).suffix.lower()
+        cloudinary_public_id = f"approved_{submission.submission_id}_{drive_file_id}{extension}"
+        source_stream = BytesIO(file_bytes)
+        source_stream.name = file_name
+        try:
+            vista_copy = cloudinary.uploader.upload(
+                source_stream,
+                folder="vista/documents",
+                resource_type="auto",
+                public_id=cloudinary_public_id,
+                overwrite=True,
+            )
+            cloudinary_url = vista_copy.get("secure_url") or vista_copy.get("url")
+            if (
+                not cloudinary_url
+                or not vista_copy.get("public_id")
+                or vista_copy.get("resource_type") not in ("image", "video", "raw")
+            ):
+                raise ValueError("Cloudinary did not return a verifiable asset identity.")
+        except Exception:
+            logger.exception(
+                "Google Drive upload succeeded but the VISTA copy failed for submission %s.",
+                submission_id,
+            )
+            result = {
+                "status": "error",
+                "code": "vista_copy_failed",
+                "detail": "The file was uploaded to Google Drive, but VISTA could not retain its copy. Retry the archive to finish.",
+                "drive_file_id": drive_file_id,
+                "drive_view_link": uploaded.get("webViewLink"),
+                "folder_path": path_segments,
+                "archive": archive_data,
+            }
+            audit_result(result, drive_file_id)
+            return result
+
+        with transaction.atomic():
+            locked_submission = Submission.objects.select_for_update().get(
+                submission_id=submission.submission_id
+            )
+            if locked_submission.status == Submission.STATUS_APPROVED:
+                document = Document.objects.filter(
+                    submission_id=locked_submission, file_url=cloudinary_url,
+                ).first()
+                if document:
+                    if not document.is_current:
+                        Document.objects.filter(submission_id=locked_submission, is_current=True).update(is_current=False)
+                        document.is_current = True
+                        document.save(update_fields=["is_current"])
+                else:
+                    Document.objects.filter(submission_id=locked_submission, is_current=True).update(is_current=False)
+                    latest = Document.objects.filter(submission_id=locked_submission).order_by("-version").first()
+                    next_version = (latest.version + 1) if latest else 1
+                    document = Document.objects.create(
+                        submission_id=locked_submission,
+                        file_name=file_name,
+                        file_url=cloudinary_url,
+                        cloudinary_public_id=vista_copy.get("public_id"),
+                        cloudinary_resource_type=vista_copy.get("resource_type"),
+                        mime_type=mime_type,
+                        file_size_kb=max(1, len(file_bytes) // 1024),
+                        version=next_version,
+                        is_current=True,
+                    )
 
     connection.last_synced_at = timezone.now()
     connection.save(update_fields=["last_synced_at"])
 
+    retained_copy = upload_kind != "approved" or document is not None
     result = {
         "status": "success",
-        "detail": "Document archived to Google Drive.",
+        "detail": (
+            "Document archived to Google Drive and retained in VISTA."
+            if retained_copy
+            else "Document archived to Google Drive. The VISTA copy was not attached because the submission is no longer approved."
+        ),
         "drive_file_id": uploaded.get("id"),
         "drive_view_link": uploaded.get("webViewLink"),
         "folder_path": path_segments,
+        "archive": archive_data,
         "document": DocumentSerializer(document).data if document else None,
     }
     audit_result(result, uploaded.get("id"))
