@@ -4,8 +4,10 @@ from .models import Submission
 from documents.models import Document
 from documents.serializers import DocumentSerializer # Ensure you import this!
 from .emails import send_status_change_email
+from notifications.models import Notification
 import logging
 from typing import NamedTuple
+from urllib.parse import urlparse
 
 import cloudinary.uploader
 import requests
@@ -63,6 +65,15 @@ class SubmissionSerializer(serializers.ModelSerializer):
 
     # NEW: Define the function that grabs the documents
     def get_documents(self, obj):
+        request = self.context.get("request")
+        if request and getattr(request.user, "role", None) == "student":
+            return []
+        # Returned entries keep their document rows for history, but those
+        # files must never be exposed as active attachments. This also hides
+        # legacy rows that were left current before the rejection transition
+        # began deactivating them.
+        if obj.status == Submission.STATUS_REJECTED:
+            return []
         # Fetch all documents where submission_id matches this submission, and it is the current version
         docs = Document.objects.filter(submission_id=obj, is_current=True)
         return DocumentSerializer(docs, many=True).data
@@ -148,6 +159,10 @@ class SubmissionCreateSerializer(serializers.ModelSerializer):
 
 class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
     remarks_text = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    attachment_action = serializers.ChoiceField(
+        choices=("add", "replace"), write_only=True, required=False,
+    )
+    attachment = serializers.JSONField(write_only=True, required=False)
     files = serializers.ListField(
         child=serializers.FileField(),
         write_only=True,
@@ -164,9 +179,33 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Submission
-        fields = ["status", "remarks_text", "files", "report_files", "drive_folder_id"]
+        fields = ["status", "remarks_text", "files", "report_files", "drive_folder_id", "attachment_action", "attachment"]
 
     def validate(self, attrs):
+        attachment_action = attrs.get("attachment_action")
+        attachment = attrs.get("attachment")
+        if bool(attachment_action) != bool(attachment):
+            raise serializers.ValidationError({"attachment": "Choose an attachment and whether to add or replace it."})
+        if attachment:
+            if not isinstance(attachment, dict):
+                raise serializers.ValidationError({"attachment": "Attachment details must be an object."})
+            if attrs.get("status") != Submission.STATUS_UNDER_REVIEW:
+                raise serializers.ValidationError({"attachment": "Attachments can only be changed while moving a submission to On Process."})
+            for required in ("file_name", "file_url", "mime_type", "file_size_kb"):
+                if required not in attachment:
+                    raise serializers.ValidationError({"attachment": f"The {required} field is required."})
+            for required in ("cloudinary_public_id", "cloudinary_resource_type"):
+                if not attachment.get(required):
+                    raise serializers.ValidationError({"attachment": f"The {required} field is required."})
+            if attachment["cloudinary_resource_type"] not in ("image", "video", "raw"):
+                raise serializers.ValidationError({"attachment": "The Cloudinary resource type is invalid."})
+            if len(str(attachment["cloudinary_public_id"])) > 255:
+                raise serializers.ValidationError({"attachment": "The Cloudinary asset identity is invalid."})
+            parsed_url = urlparse(str(attachment["file_url"]))
+            if parsed_url.scheme != "https" or parsed_url.hostname != "res.cloudinary.com":
+                raise serializers.ValidationError({"attachment": "The attachment must be stored in Cloudinary."})
+            if not isinstance(attachment["file_size_kb"], int) or attachment["file_size_kb"] < 0:
+                raise serializers.ValidationError({"attachment": "File size must be a non-negative number of KB."})
         is_verifying = attrs.get("status") == Submission.STATUS_APPROVED
         if attrs.get("files") and self.instance.is_accomplishment_report and not is_verifying:
             raise serializers.ValidationError(
@@ -239,6 +278,8 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
         remarks_text = validated_data.pop("remarks_text", "")
         uploaded_files = validated_data.pop("files", [])
         report_files = validated_data.pop("report_files", [])
+        attachment_action = validated_data.pop("attachment_action", None)
+        attachment = validated_data.pop("attachment", None)
         drive_folder_id = self.initial_data.get("drive_folder_id", "")
         validated_data.pop("drive_folder_id", None)  # The selected folder is used as the archive root.
         old_status, new_status = instance.status, validated_data["status"]
@@ -254,15 +295,28 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
         with transaction.atomic():
             instance.status = new_status
             instance.save(update_fields=["status", "updated_at"])
-            ReviewLog.objects.create(
-                submission_id=instance,
-                changed_by=request.user,
-                remarks_text=remarks_text,
-                old_status=old_status,
-                new_status=new_status,
-            )
+            if new_status != old_status:
+                ReviewLog.objects.create(
+                    submission_id=instance,
+                    changed_by=request.user,
+                    remarks_text=remarks_text,
+                    old_status=old_status,
+                    new_status=new_status,
+                )
             if replaces_documents:
                 self._replace_documents(instance, payloads, urls)
+            if attachment:
+                self._save_attachment(instance, attachment_action, attachment)
+            if new_status == Submission.STATUS_REJECTED:
+                # Retain the historical records, but detach them from the active entry.
+                Document.objects.filter(submission_id=instance, is_current=True).update(is_current=False)
+            if new_status != old_status and instance.submitted_by and instance.submitted_by.role == "student":
+                Notification.objects.create(
+                    user_id=instance.submitted_by,
+                    submission_id=instance,
+                    type="submission_status_changed",
+                    message=f"{instance.title} is now {new_status.replace('_', ' ').title()}.",
+                )
 
         # Notify the submitter by email whenever the status actually changed.
         # Sent outside the atomic block, after the DB commit, so a slow or
@@ -286,6 +340,31 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
         return instance
 
     @staticmethod
+    def _save_attachment(submission, action, attachment):
+        existing = Document.objects.filter(
+            submission_id=submission, file_url=attachment["file_url"]
+        ).first()
+        if action == "replace":
+            Document.objects.filter(submission_id=submission, is_current=True).update(is_current=False)
+        if existing:
+            if not existing.is_current:
+                existing.is_current = True
+                existing.save(update_fields=["is_current"])
+            return
+        latest = Document.objects.filter(submission_id=submission).order_by("-version").first()
+        Document.objects.create(
+            submission_id=submission,
+            file_name=attachment["file_name"],
+            file_url=attachment["file_url"],
+            cloudinary_public_id=attachment["cloudinary_public_id"],
+            cloudinary_resource_type=attachment["cloudinary_resource_type"],
+            mime_type=attachment["mime_type"],
+            file_size_kb=attachment["file_size_kb"],
+            version=(latest.version + 1) if latest else 1,
+            is_current=True,
+        )
+
+    @staticmethod
     def _to_payload(uploaded_file):
         content = uploaded_file.read()
         uploaded_file.seek(0)  # rewind so Cloudinary can still read the stream
@@ -298,7 +377,7 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
     @staticmethod
     def _upload_to_cloudinary(files):
         """Uploads each file once; returns secure URLs in the same order."""
-        urls = []
+        uploaded_assets = []
         for f in files:
             try:
                 result = cloudinary.uploader.upload(f, folder="vista/documents", resource_type="auto")
@@ -307,23 +386,34 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"files": f"Failed to upload '{f.name}'. Please try again."}
                 ) from exc
-            urls.append(result.get("secure_url") or result.get("url"))
-        return urls
+            asset_url = result.get("secure_url") or result.get("url")
+            if not asset_url or not result.get("public_id") or result.get("resource_type") not in ("image", "video", "raw"):
+                raise serializers.ValidationError(
+                    {"files": f"Cloudinary did not return a verifiable asset identity for '{f.name}'."}
+                )
+            uploaded_assets.append({
+                "file_url": asset_url,
+                "cloudinary_public_id": result.get("public_id"),
+                "cloudinary_resource_type": result.get("resource_type"),
+            })
+        return uploaded_assets
 
     @staticmethod
-    def _replace_documents(submission, payloads, urls):
+    def _replace_documents(submission, payloads, uploaded_assets):
         Document.objects.filter(submission_id=submission).delete()
         Document.objects.bulk_create(
             Document(
                 submission_id=submission,
                 file_name=p.name,
-                file_url=url,
+                file_url=asset["file_url"],
+                cloudinary_public_id=asset["cloudinary_public_id"],
+                cloudinary_resource_type=asset["cloudinary_resource_type"],
                 mime_type=p.mime_type,
                 file_size_kb=max(1, len(p.content) // 1024),
                 version=1,
                 is_current=True,
             )
-            for p, url in zip(payloads, urls)
+            for p, asset in zip(payloads, uploaded_assets)
         )
 
     @staticmethod

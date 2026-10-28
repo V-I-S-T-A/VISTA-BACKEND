@@ -8,6 +8,8 @@ class Document(models.Model):
     submission_id = models.ForeignKey(Submission, on_delete=models.CASCADE, db_column="submission_id")
     file_name = models.CharField(max_length=255)
     file_url = models.CharField(max_length=500)
+    cloudinary_public_id = models.CharField(max_length=255, null=True, blank=True)
+    cloudinary_resource_type = models.CharField(max_length=10, null=True, blank=True)
     mime_type = models.CharField(max_length=100)
     file_size_kb = models.IntegerField()
     version = models.IntegerField(default=1)
