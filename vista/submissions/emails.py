@@ -70,6 +70,7 @@ def _today():
 
 
 def _build_text_body(submission, name, new_status, remarks, date_str):
+    submission_url = _submission_url(submission)
     lines = [
         f"Dear {name},",
         "",
@@ -89,6 +90,7 @@ def _build_text_body(submission, name, new_status, remarks, date_str):
         f"Date: {date_str}",
         "",
         "You may log in to VISTA at any time to view your submission.",
+        f"View this submission: {submission_url}",
         "",
         "Regards,",
         "Office of Student Affairs",
@@ -100,6 +102,7 @@ def _build_text_body(submission, name, new_status, remarks, date_str):
 
 
 def _build_html_body(submission, name, new_status, remarks, date_str):
+    submission_url = escape(_submission_url(submission), quote=True)
     title = escape(submission.title)
     label = escape(_label(new_status))
     message = escape(STATUS_MESSAGES.get(new_status, ""))
@@ -157,6 +160,7 @@ def _build_html_body(submission, name, new_status, remarks, date_str):
                 <p style="margin: 0 0 24px 0;">
                   You may log in to VISTA at any time to view your submission.
                 </p>
+                <p style="margin: 0 0 24px 0;"><a href="{submission_url}" style="color: #1f5cae; font-weight: 700;">View this submission</a></p>
                 <p style="margin: 0 0 8px 0;">
                   Regards,<br />
                   Office of Student Affairs
@@ -210,3 +214,8 @@ def send_status_change_email(submission, old_status, new_status, remarks_text=""
         "text/html",
     )
     message.send(fail_silently=False)
+
+
+def _submission_url(submission):
+    base = getattr(settings, "FRONTEND_URL", "").rstrip("/")
+    return f"{base}/student/review-tracker/{submission.submission_id}"
