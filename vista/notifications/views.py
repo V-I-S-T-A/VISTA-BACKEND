@@ -19,7 +19,7 @@ class StudentNotificationListView(APIView):
         cutoff = timezone.now() - timedelta(days=30)
         return Notification.objects.filter(
             user_id=request.user, created_at__gte=cutoff,
-        ).select_related("submission_id").order_by("-created_at")
+        ).select_related("submission_id", "actor").order_by("-created_at")
 
     def get(self, request):
         notifications = self.get_queryset(request)

@@ -6,11 +6,14 @@ from .models import Notification
 class NotificationSerializer(serializers.ModelSerializer):
     submission_title = serializers.CharField(source="submission_id.title", read_only=True)
     submission_status = serializers.CharField(source="submission_id.status", read_only=True)
+    actor_name = serializers.CharField(source="actor.full_name", read_only=True, allow_null=True)
+    actor_image_url = serializers.URLField(source="actor.image_url", read_only=True, allow_null=True)
 
     class Meta:
         model = Notification
         fields = [
             "notification_id", "submission_id", "submission_title",
             "submission_status", "type", "message", "is_read", "created_at",
+            "actor_name", "actor_image_url",
         ]
         read_only_fields = fields

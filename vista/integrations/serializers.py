@@ -3,10 +3,18 @@ from .models import DriveArchive, GoogleDriveConnection
 
 
 class DriveArchiveSerializer(serializers.ModelSerializer):
+    archived_by_name = serializers.SerializerMethodField()
+
+    def get_archived_by_name(self, obj):
+        if not obj.archived_by:
+            return None
+        return obj.archived_by.get_full_name().strip() or None
+
     class Meta:
         model = DriveArchive
         fields = [
             "archive_id",
+            "archived_by_name",
             "drive_file_id",
             "file_name",
             "drive_view_link",

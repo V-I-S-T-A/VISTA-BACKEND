@@ -32,6 +32,7 @@ class Submission(models.Model):
     title = models.CharField(max_length=255, db_index=True)
     description = models.TextField()
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True)
+    priority_escalation = models.BooleanField(default=False, db_index=True)
     submitted_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
