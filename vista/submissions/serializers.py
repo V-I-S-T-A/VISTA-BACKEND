@@ -297,6 +297,7 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
         drive_folder_id = self.initial_data.get("drive_folder_id", "")
         validated_data.pop("drive_folder_id", None)  # The selected folder is used as the archive root.
         old_status, new_status = instance.status, validated_data.get("status", instance.status)
+        old_priority_escalation = instance.priority_escalation
 
         payloads = [self._to_payload(f) for f in uploaded_files]
         report_payloads = [self._to_payload(f) for f in report_files]
@@ -337,6 +338,19 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
                     actor=request.user,
                     type="submission_status_changed",
                     message=f"{instance.title} is now {new_status.replace('_', ' ').title()}.",
+                )
+            if (
+                not old_priority_escalation
+                and instance.priority_escalation
+                and instance.submitted_by
+                and instance.submitted_by.role == "student"
+            ):
+                Notification.objects.create(
+                    user_id=instance.submitted_by,
+                    submission_id=instance,
+                    actor=request.user,
+                    type="submission_priority_changed",
+                    message=f"{instance.title} has been marked as a priority submission.",
                 )
 
         # Notify the submitter by email whenever the status actually changed.
