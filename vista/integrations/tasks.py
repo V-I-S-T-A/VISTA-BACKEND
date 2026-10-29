@@ -122,6 +122,7 @@ def upload_document_to_drive(
     use_auto_folder=True,
     manual_folder_id=None,
     upload_kind="approved",
+    notification_id=None,
 ):
     """
     Backs the manual "Archive to Google Drive" button on the Review Panel.
@@ -139,6 +140,11 @@ def upload_document_to_drive(
     from users.models import User
 
     staff_user = User.objects.filter(user_id=staff_user_id).first()
+
+    def update_upload_notification(status, message):
+        from notifications.services import update_drive_upload_notification
+
+        update_drive_upload_notification(notification_id, status, message)
 
     def audit_result(result, drive_file_id=None):
         log_create(
@@ -163,6 +169,7 @@ def upload_document_to_drive(
             "code": "drive_reauth_required",
             "detail": "Connect Google Drive first.",
         }
+        update_upload_notification("error", result["detail"])
         audit_result(result)
         return result
 
@@ -172,16 +179,19 @@ def upload_document_to_drive(
         ).get(submission_id=submission_id)
     except Submission.DoesNotExist:
         result = {"status": "error", "detail": "Submission not found."}
+        update_upload_notification("error", result["detail"])
         audit_result(result)
         return result
 
     if submission.status != Submission.STATUS_APPROVED:
         result = {"status": "error", "detail": "Only approved submissions can be archived to Drive."}
+        update_upload_notification("error", result["detail"])
         audit_result(result)
         return result
 
     if upload_kind == "report" and not submission.is_accomplishment_report:
         result = {"status": "error", "detail": "Report files can only be archived for an Accomplishment Report."}
+        update_upload_notification("error", result["detail"])
         audit_result(result)
         return result
 
@@ -194,13 +204,13 @@ def upload_document_to_drive(
                 connection, submission, approved_copy=False, base_folder_id=manual_folder_id or None
             )
             target_folder_id = folder["id"]
-        elif use_auto_folder or not manual_folder_id:
+        else:
+            # A manually selected folder is an alternate archive root. Keep
+            # the submission hierarchy (including Approved) beneath it.
             folder, path_segments = google_client.resolve_submission_folder_path(
                 connection, submission, approved_copy=True, base_folder_id=manual_folder_id or None
             )
             target_folder_id = folder["id"]
-        else:
-            target_folder_id = manual_folder_id
 
         uploaded = google_client.upload_file_to_folder(
             connection=connection,
@@ -217,11 +227,13 @@ def upload_document_to_drive(
             "code": "drive_reauth_required",
             "detail": "Your Google Drive connection has expired. Please reconnect your Google account.",
         }
+        update_upload_notification("error", result["detail"])
         audit_result(result)
         return result
     except Exception:
         logger.exception("Manual Drive archive failed for submission %s", submission_id)
         result = {"status": "error", "detail": "Failed to upload the file to Google Drive. Please try again."}
+        update_upload_notification("error", result["detail"])
         audit_result(result)
         return result
 
@@ -233,6 +245,7 @@ def upload_document_to_drive(
             "detail": "The file reached Google Drive, but VISTA could not save its archive location because Drive returned no file ID.",
             "drive_view_link": uploaded.get("webViewLink"),
         }
+        update_upload_notification("error", result["detail"])
         audit_result(result)
         return result
 
@@ -305,6 +318,7 @@ def upload_document_to_drive(
                 "folder_path": path_segments,
                 "archive": archive_data,
             }
+            update_upload_notification("error", result["detail"])
             audit_result(result, drive_file_id)
             return result
 
@@ -354,5 +368,11 @@ def upload_document_to_drive(
         "archive": archive_data,
         "document": DocumentSerializer(document).data if document else None,
     }
+    target_path = " › ".join(path_segments or [])
+    update_upload_notification(
+        "success",
+        f"{file_name} was archived to Google Drive"
+        + (f" in {target_path}." if target_path else "."),
+    )
     audit_result(result, uploaded.get("id"))
     return result

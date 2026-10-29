@@ -1,4 +1,5 @@
 from datetime import timezone as dt_timezone
+import logging
 
 from django.shortcuts import redirect
 from django.http import HttpResponse
@@ -23,9 +24,10 @@ from django.utils import timezone
 from .serializers import DriveUploadSerializer
 from urllib.parse import urlencode
 from django.core import signing
-from django.shortcuts import redirect
 from rest_framework.permissions import AllowAny
 from users.models import User
+
+logger = logging.getLogger(__name__)
 
 APP_CALLBACK_URL = "vista-app://drive-callback"
 WEB_CALLBACK_URL = f"{settings.FRONTEND_URL.rstrip('/')}/staff/gdrive-sync/callback"
@@ -312,6 +314,10 @@ class DriveSubmissionUploadView(APIView):
         import base64
         from submissions.models import Submission
         from .tasks import upload_document_to_drive
+        from notifications.services import (
+            create_drive_upload_notification,
+            update_drive_upload_notification,
+        )
 
         serializer = DriveUploadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -341,16 +347,32 @@ class DriveSubmissionUploadView(APIView):
         file_bytes = uploaded_file.read()
         mime_type = uploaded_file.content_type or "application/octet-stream"
 
-        async_result = upload_document_to_drive.delay(
-            staff_user_id=str(request.user.user_id),
-            submission_id=str(submission.submission_id),
-            file_b64=base64.b64encode(file_bytes).decode("ascii"),
-            file_name=file_name,
-            mime_type=mime_type,
-            use_auto_folder=data.get("use_auto_folder", True),
-            manual_folder_id=data.get("folder_id") or None,
-            upload_kind=data.get("upload_kind", "approved"),
+        notification = create_drive_upload_notification(
+            request.user, submission, file_name
         )
+        try:
+            async_result = upload_document_to_drive.delay(
+                staff_user_id=str(request.user.user_id),
+                submission_id=str(submission.submission_id),
+                file_b64=base64.b64encode(file_bytes).decode("ascii"),
+                file_name=file_name,
+                mime_type=mime_type,
+                use_auto_folder=data.get("use_auto_folder", True),
+                manual_folder_id=data.get("folder_id") or None,
+                upload_kind=data.get("upload_kind", "approved"),
+                notification_id=str(notification.notification_id),
+            )
+        except Exception:
+            update_drive_upload_notification(
+                notification.notification_id,
+                "error",
+                f"Could not start the Google Drive upload for {file_name}.",
+            )
+            logger.exception("Could not queue Drive upload for submission %s", submission.submission_id)
+            return Response(
+                {"detail": "Could not start the Google Drive upload. Please try again."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
         return Response(
             {"detail": "Upload started.", "task_id": async_result.id, "status": "queued"},
