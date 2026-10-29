@@ -168,7 +168,33 @@ class SubmissionCreateSerializer(serializers.ModelSerializer):
         if not validated_data.get("submitted_by") or request.user.role not in ("staff", "admin"):
             validated_data["submitted_by"] = request.user
         validated_data["status"] = Submission.STATUS_PENDING
-        return Submission.objects.create(**validated_data)
+        with transaction.atomic():
+            submission = Submission.objects.create(**validated_data)
+            student = submission.submitted_by
+            if student and student.role == "student":
+                Notification.objects.create(
+                    user_id=student,
+                    submission_id=submission,
+                    actor=request.user,
+                    type="submission_status_changed",
+                    message=(
+                        f"{submission.title} has been received and is now "
+                        f"{submission.status.replace('_', ' ').title()}."
+                    ),
+                )
+
+        if student and student.role == "student":
+            def send_initial_status_email():
+                try:
+                    send_status_change_email(submission, "new", submission.status)
+                except Exception:
+                    logger.exception(
+                        "Failed to send initial submission email for submission %s",
+                        submission.submission_id,
+                    )
+
+            transaction.on_commit(send_initial_status_email)
+        return submission
 
 
 class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
