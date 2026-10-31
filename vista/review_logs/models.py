@@ -24,3 +24,22 @@ class ReviewLog(models.Model):
 
     def __str__(self):
         return f"{self.submission_id_id}: {self.old_status} -> {self.new_status}"
+
+
+REPLY_MAX_LENGTH = 4000
+
+
+class ReviewReply(models.Model):
+    reply_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    review_log = models.ForeignKey(ReviewLog, on_delete=models.CASCADE, related_name="replies")
+    parent_reply = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True, related_name="followups")
+    author = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
+    message = models.TextField(max_length=REPLY_MAX_LENGTH)
+    # Stable per-composer token makes ambiguous retries safe, including concurrent requests.
+    client_request_id = models.UUIDField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "reply_id"]
+        constraints = [models.UniqueConstraint(fields=["author", "client_request_id"], name="reply_author_request_unique")]
+        indexes = [models.Index(fields=["review_log", "created_at", "reply_id"], name="reply_thread_date_idx")]
