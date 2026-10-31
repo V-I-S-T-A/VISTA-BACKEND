@@ -33,7 +33,10 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
             await self.channel_layer.group_discard(self.group_name, self.channel_name)
 
     async def notification_changed(self, event):
-        await self.send_json({"type": "notification.changed", "id": event["id"]})
+        payload = {"type": event.get("event_type", "notification.changed"), "id": event["id"]}
+        if event.get("review_log_id"):
+            payload["review_log_id"] = event["review_log_id"]
+        await self.send_json(payload)
 
     @database_sync_to_async
     def _get_user(self, raw_token):
