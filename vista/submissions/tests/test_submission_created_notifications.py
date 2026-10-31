@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, call, patch
 import uuid
 
-from django.test import SimpleTestCase, override_settings
+from django.test import TestCase, override_settings
 
 from submissions.models import Submission
 from submissions.serializers import (
@@ -13,15 +13,16 @@ from submissions.serializers import (
 from submissions.emails import _submission_url
 
 
-class SubmissionCreatedNotificationTests(SimpleTestCase):
+class SubmissionCreatedNotificationTests(TestCase):
     def test_new_student_submission_creates_system_notification_and_sends_email(self):
         student = SimpleNamespace(role="student", email="student@example.com")
         request = SimpleNamespace(user=student)
         submission = SimpleNamespace(
             submitted_by=student,
-            status=Submission.STATUS_PENDING,
+            status=Submission.STATUS_UNDER_REVIEW,
             submission_id="submission-id",
             title="Student activity request",
+            priority_escalation=False,
         )
         serializer = SubmissionCreateSerializer(context={"request": request})
 
@@ -30,12 +31,14 @@ class SubmissionCreatedNotificationTests(SimpleTestCase):
         ), patch(
             "submissions.serializers.Submission.objects.create", return_value=submission
         ) as create_submission, patch(
+            "review_logs.models.ReviewLog.objects.create"
+        ) as create_review_log, patch(
             "submissions.serializers.Notification.objects.create"
         ) as create_notification, patch(
             "submissions.serializers.transaction.on_commit",
             side_effect=lambda callback: callback(),
         ), patch(
-            "submissions.serializers.send_status_change_email"
+            "submissions.serializers.send_submission_received_email"
         ) as send_email:
             created = serializer.create({"title": submission.title})
 
@@ -43,16 +46,22 @@ class SubmissionCreatedNotificationTests(SimpleTestCase):
         create_submission.assert_called_once_with(
             title=submission.title,
             submitted_by=student,
-            status=Submission.STATUS_PENDING,
+            status=Submission.STATUS_UNDER_REVIEW,
+        )
+        create_review_log.assert_called_once_with(
+            submission_id=submission,
+            changed_by=student,
+            old_status=Submission.STATUS_UNDER_REVIEW,
+            new_status=Submission.STATUS_UNDER_REVIEW,
         )
         create_notification.assert_called_once_with(
             user_id=student,
             submission_id=submission,
             actor=student,
-            type="submission_status_changed",
-            message="Student activity request has been received and is now Pending.",
+            type="submission_created",
+            message='Your submission, "Student activity request", has been received and is now On Process.',
         )
-        send_email.assert_called_once_with(submission, "new", Submission.STATUS_PENDING)
+        send_email.assert_called_once_with(submission)
 
     def test_staff_creating_submission_for_student_notifies_student(self):
         staff = SimpleNamespace(role="staff", email="staff@example.com")
@@ -60,9 +69,10 @@ class SubmissionCreatedNotificationTests(SimpleTestCase):
         request = SimpleNamespace(user=staff)
         submission = SimpleNamespace(
             submitted_by=student,
-            status=Submission.STATUS_PENDING,
+            status=Submission.STATUS_UNDER_REVIEW,
             submission_id="sub-123",
             title="Campus Permit Request",
+            priority_escalation=False,
         )
         serializer = SubmissionCreateSerializer(context={"request": request})
 
@@ -71,12 +81,14 @@ class SubmissionCreatedNotificationTests(SimpleTestCase):
         ), patch(
             "submissions.serializers.Submission.objects.create", return_value=submission
         ) as create_submission, patch(
+            "review_logs.models.ReviewLog.objects.create"
+        ), patch(
             "submissions.serializers.Notification.objects.create"
         ) as create_notification, patch(
             "submissions.serializers.transaction.on_commit",
             side_effect=lambda callback: callback(),
         ), patch(
-            "submissions.serializers.send_status_change_email"
+            "submissions.serializers.send_submission_received_email"
         ) as send_email:
             created = serializer.create({"title": submission.title, "submitted_by": student})
 
@@ -84,25 +96,26 @@ class SubmissionCreatedNotificationTests(SimpleTestCase):
         create_submission.assert_called_once_with(
             title=submission.title,
             submitted_by=student,
-            status=Submission.STATUS_PENDING,
+            status=Submission.STATUS_UNDER_REVIEW,
         )
         create_notification.assert_called_once_with(
             user_id=student,
             submission_id=submission,
             actor=staff,
-            type="submission_status_changed",
-            message="Campus Permit Request has been received and is now Pending.",
+            type="submission_created",
+            message='Your submission, "Campus Permit Request", has been received and is now On Process.',
         )
-        send_email.assert_called_once_with(submission, "new", Submission.STATUS_PENDING)
+        send_email.assert_called_once_with(submission)
 
     def test_submission_by_non_student_does_not_send_notification_or_email(self):
         staff = SimpleNamespace(role="staff", email="staff@example.com")
         request = SimpleNamespace(user=staff)
         submission = SimpleNamespace(
             submitted_by=staff,
-            status=Submission.STATUS_PENDING,
+            status=Submission.STATUS_UNDER_REVIEW,
             submission_id="sub-456",
             title="Internal Staff Document",
+            priority_escalation=False,
         )
         serializer = SubmissionCreateSerializer(context={"request": request})
 
@@ -111,12 +124,14 @@ class SubmissionCreatedNotificationTests(SimpleTestCase):
         ), patch(
             "submissions.serializers.Submission.objects.create", return_value=submission
         ), patch(
+            "review_logs.models.ReviewLog.objects.create"
+        ), patch(
             "submissions.serializers.Notification.objects.create"
         ) as create_notification, patch(
             "submissions.serializers.transaction.on_commit",
             side_effect=lambda callback: callback(),
         ), patch(
-            "submissions.serializers.send_status_change_email"
+            "submissions.serializers.send_submission_received_email"
         ) as send_email:
             created = serializer.create({"title": submission.title})
 
@@ -129,9 +144,10 @@ class SubmissionCreatedNotificationTests(SimpleTestCase):
         request = SimpleNamespace(user=student)
         submission = SimpleNamespace(
             submitted_by=student,
-            status=Submission.STATUS_PENDING,
+            status=Submission.STATUS_UNDER_REVIEW,
             submission_id="sub-error",
             title="Activity Letter",
+            priority_escalation=False,
         )
         serializer = SubmissionCreateSerializer(context={"request": request})
 
@@ -140,12 +156,14 @@ class SubmissionCreatedNotificationTests(SimpleTestCase):
         ), patch(
             "submissions.serializers.Submission.objects.create", return_value=submission
         ), patch(
+            "review_logs.models.ReviewLog.objects.create"
+        ), patch(
             "submissions.serializers.Notification.objects.create"
         ) as create_notification, patch(
             "submissions.serializers.transaction.on_commit",
             side_effect=lambda callback: callback(),
         ), patch(
-            "submissions.serializers.send_status_change_email",
+            "submissions.serializers.send_submission_received_email",
             side_effect=RuntimeError("SMTP error"),
         ) as send_email, patch(
             "submissions.serializers.logger.exception"
@@ -162,9 +180,10 @@ class SubmissionCreatedNotificationTests(SimpleTestCase):
         request = SimpleNamespace(user=student)
         submission = SimpleNamespace(
             submitted_by=student,
-            status=Submission.STATUS_PENDING,
+            status=Submission.STATUS_UNDER_REVIEW,
             submission_id="sub-dedup",
             title="Single Notification Check",
+            priority_escalation=False,
         )
         serializer = SubmissionCreateSerializer(context={"request": request})
 
@@ -173,12 +192,14 @@ class SubmissionCreatedNotificationTests(SimpleTestCase):
         ), patch(
             "submissions.serializers.Submission.objects.create", return_value=submission
         ), patch(
+            "review_logs.models.ReviewLog.objects.create"
+        ), patch(
             "submissions.serializers.Notification.objects.create"
         ) as create_notification, patch(
             "submissions.serializers.transaction.on_commit",
             side_effect=lambda callback: callback(),
         ), patch(
-            "submissions.serializers.send_status_change_email"
+            "submissions.serializers.send_submission_received_email"
         ) as send_email:
             serializer.create({"title": submission.title})
 
@@ -191,7 +212,7 @@ class SubmissionCreatedNotificationTests(SimpleTestCase):
         request = SimpleNamespace(user=staff)
 
         transitions = [
-            (Submission.STATUS_PENDING, Submission.STATUS_UNDER_REVIEW, "Under Review"),
+            (Submission.STATUS_PENDING, Submission.STATUS_UNDER_REVIEW, "On Process"),
             (Submission.STATUS_UNDER_REVIEW, Submission.STATUS_APPROVED, "Approved"),
             (Submission.STATUS_UNDER_REVIEW, Submission.STATUS_REJECTED, "Rejected"),
             (Submission.STATUS_UNDER_REVIEW, Submission.STATUS_RESUBMISSION_REQUIRED, "Resubmission Required"),
@@ -220,14 +241,19 @@ class SubmissionCreatedNotificationTests(SimpleTestCase):
                 with patch(
                     "submissions.serializers.transaction.atomic", return_value=nullcontext()
                 ), patch(
+                    "submissions.serializers.transaction.on_commit", side_effect=lambda callback: callback()
+                ), patch(
                     "submissions.serializers.Document.objects.filter", return_value=doc_query
                 ), patch(
+                    "review_logs.models.ReviewLog.objects.filter"
+                ) as filter_rlog, patch(
                     "review_logs.models.ReviewLog.objects.create"
                 ), patch(
                     "submissions.serializers.Notification.objects.create"
                 ) as create_notification, patch(
                     "submissions.serializers.send_status_change_email"
                 ) as send_email:
+                    filter_rlog.return_value.order_by.return_value.first.return_value = None
                     updated = serializer.update(
                         submission,
                         {"status": new_status, "remarks_text": "Review remarks"},
@@ -273,12 +299,15 @@ class SubmissionCreatedNotificationTests(SimpleTestCase):
         ), patch(
             "submissions.serializers.Document.objects.filter", return_value=doc_query
         ), patch(
+            "review_logs.models.ReviewLog.objects.filter"
+        ) as filter_rlog, patch(
             "review_logs.models.ReviewLog.objects.create"
         ), patch(
             "submissions.serializers.Notification.objects.create"
         ) as create_notification, patch(
             "submissions.serializers.send_status_change_email"
         ) as send_email:
+            filter_rlog.return_value.order_by.return_value.first.return_value = None
             serializer.update(submission, {"status": Submission.STATUS_UNDER_REVIEW})
 
         create_notification.assert_not_called()

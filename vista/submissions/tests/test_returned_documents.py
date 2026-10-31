@@ -1,6 +1,6 @@
 from contextlib import nullcontext
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, MagicMock, patch
 
 from django.test import SimpleTestCase
 
@@ -22,7 +22,8 @@ class ReturnedDocumentTests(SimpleTestCase):
         submission = Mock()
         submission.status = "under_review"
         submission.submitted_by = None
-        document_query = Mock()
+        document_query = MagicMock()
+        document_query.order_by.return_value.values_list.return_value = ['retained.pdf']
         request = SimpleNamespace(user=SimpleNamespace(role="staff"))
         serializer = SubmissionStatusUpdateSerializer(
             submission,
@@ -32,13 +33,16 @@ class ReturnedDocumentTests(SimpleTestCase):
 
         with patch("submissions.serializers.transaction.atomic", return_value=nullcontext()), patch(
             "review_logs.models.ReviewLog.objects.create"
+        ), patch("review_logs.models.ReviewLog.objects.filter"), patch(
+            "submissions.serializers.transaction.on_commit", side_effect=lambda callback: callback()
         ), patch("submissions.serializers.Document.objects.filter", return_value=document_query) as filter_documents, patch(
             "submissions.serializers.send_status_change_email"
         ):
             updated = serializer.update(submission, {"status": Submission.STATUS_REJECTED})
 
         self.assertIs(updated, submission)
-        filter_documents.assert_called_once_with(
+        self.assertEqual(filter_documents.call_count, 2)
+        filter_documents.assert_called_with(
             submission_id=submission,
             is_current=True,
         )

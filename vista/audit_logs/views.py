@@ -8,6 +8,7 @@ from .serializers import AuditLogSerializer, AuditLogListSerializer, AuditLogSum
 from .filters import AuditLogFilter
 from vista.pagination import StandardResultsPagination
 from submissions.models import Submission
+from submissions.visibility import student_submission_scope
 
 class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = AuditLog.objects.all().select_related("user_id__org_id")
@@ -48,12 +49,12 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
                 action__in=["login", "logout"]
             ).distinct()
 
-        # 3. STUDENTS: Keep original logic (view their own actions + changes to their submissions)
+        # 3. STUDENTS: Own actions and changes to their visible organization submissions.
         if user.role == "student":
             student_q = Q(user_id=user)
 
             student_sub_ids = list(
-                Submission.objects.filter(submitted_by=user)
+                Submission.objects.filter(student_submission_scope(user))
                 .values_list("submission_id", flat=True)
                 .distinct()
             )

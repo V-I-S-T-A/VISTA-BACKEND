@@ -3,7 +3,7 @@ from users.models import User
 from .models import Submission
 from documents.models import Document
 from documents.serializers import DocumentSerializer # Ensure you import this!
-from .emails import send_priority_change_email, send_status_change_email
+from .emails import send_priority_change_email, send_status_change_email, send_submission_received_email
 from notifications.models import Notification
 import logging
 from typing import NamedTuple
@@ -140,11 +140,14 @@ class SubmissionCreateSerializer(serializers.ModelSerializer):
             "submitted_by",
             "title",
             "description",
+            "priority_escalation",
         ]
         read_only_fields = ["submission_id"]
 
     def validate(self, data):
         request = self.context["request"]
+        if data.get('priority_escalation') and request.user.role not in ('staff', 'admin'):
+            raise serializers.ValidationError({'priority_escalation': 'Only staff or admin may prioritize submissions.'})
         submitted_by = data.get("submitted_by")
         org_id = data.get("org_id")
 
@@ -164,37 +167,43 @@ class SubmissionCreateSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
+        from review_logs.models import ReviewLog
+
         request = self.context["request"]
         if not validated_data.get("submitted_by") or request.user.role not in ("staff", "admin"):
             validated_data["submitted_by"] = request.user
-        validated_data["status"] = Submission.STATUS_PENDING
+        validated_data["status"] = Submission.STATUS_UNDER_REVIEW
         with transaction.atomic():
-            submission = Submission.objects.create(**validated_data)
-            student = submission.submitted_by
-            if student and student.role == "student":
+            instance = Submission.objects.create(**validated_data)
+            ReviewLog.objects.create(
+                submission_id=instance, changed_by=request.user,
+                old_status=instance.status, new_status=instance.status,
+            )
+            if instance.submitted_by and instance.submitted_by.role == 'student':
                 Notification.objects.create(
-                    user_id=student,
-                    submission_id=submission,
-                    actor=request.user,
-                    type="submission_status_changed",
-                    message=(
-                        f"{submission.title} has been received and is now "
-                        f"{submission.status.replace('_', ' ').title()}."
-                    ),
+                    user_id=instance.submitted_by, submission_id=instance, actor=request.user,
+                    type='submission_created',
+                    message=f'Your submission, "{instance.title}", has been received and is now On Process.',
                 )
-
-        if student and student.role == "student":
-            def send_initial_status_email():
-                try:
-                    send_status_change_email(submission, "new", submission.status)
-                except Exception:
-                    logger.exception(
-                        "Failed to send initial submission email for submission %s",
-                        submission.submission_id,
-                    )
-
-            transaction.on_commit(send_initial_status_email)
-        return submission
+                def notify_received():
+                    try:
+                        send_submission_received_email(instance)
+                    except Exception:
+                        logger.exception('Failed to send submission-received email for submission %s', instance.submission_id)
+                transaction.on_commit(notify_received)
+            if instance.priority_escalation and instance.submitted_by and instance.submitted_by.role == 'student':
+                Notification.objects.create(
+                    user_id=instance.submitted_by, submission_id=instance, actor=request.user,
+                    type='submission_priority_changed',
+                    message=f'{instance.title} has been marked as a priority submission.',
+                )
+                def notify_priority():
+                    try:
+                        send_priority_change_email(instance)
+                    except Exception:
+                        logger.exception('Failed to send priority email for submission %s', instance.submission_id)
+                transaction.on_commit(notify_priority)
+        return instance
 
 
 class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
@@ -322,8 +331,6 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
         attachment = validated_data.pop("attachment", None)
         drive_folder_id = self.initial_data.get("drive_folder_id", "")
         validated_data.pop("drive_folder_id", None)  # The selected folder is used as the archive root.
-        old_status, new_status = instance.status, validated_data.get("status", instance.status)
-        old_priority_escalation = instance.priority_escalation
         priority_was_added = False
 
         payloads = [self._to_payload(f) for f in uploaded_files]
@@ -335,6 +342,14 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
         urls = self._upload_to_cloudinary(uploaded_files) if replaces_documents else []
 
         with transaction.atomic():
+            # A retry may have been validated before another review committed.
+            instance.refresh_from_db(from_queryset=Submission.objects.select_for_update())
+            old_status = instance.status
+            instance._previous_status = old_status
+            new_status = validated_data.get("status", old_status)
+            if "status" in validated_data:
+                self.validate_status(new_status)
+            old_priority_escalation = instance.priority_escalation
             active_file_names = list(
                 Document.objects.filter(submission_id=instance, is_current=True)
                 .order_by("uploaded_at")
@@ -373,7 +388,11 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
                         "previous_files": active_file_names,
                         "new_files": [],
                     }
-            if new_status != old_status or attachment_change:
+            latest_review = ReviewLog.objects.filter(submission_id=instance).order_by('-changed_at').first()
+            remarks_changed = bool(remarks_text.strip()) and (
+                latest_review is None or remarks_text != latest_review.remarks_text
+            )
+            if new_status != old_status or attachment_change or remarks_changed:
                 ReviewLog.objects.create(
                     submission_id=instance,
                     changed_by=request.user,
@@ -388,7 +407,7 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
                     submission_id=instance,
                     actor=request.user,
                     type="submission_status_changed",
-                    message=f"{instance.title} is now {new_status.replace('_', ' ').title()}.",
+                    message=f"{instance.title} is now {'On Process' if new_status == Submission.STATUS_UNDER_REVIEW else new_status.replace('_', ' ').title()}.",
                 )
             if (
                 priority_was_added
@@ -403,28 +422,23 @@ class SubmissionStatusUpdateSerializer(serializers.ModelSerializer):
                     message=f"{instance.title} has been marked as a priority submission.",
                 )
 
-        # Notify the submitter by email whenever the status actually changed.
-        # Sent outside the atomic block, after the DB commit, so a slow or
-        # failing mail server never rolls back (or blocks) the review
-        # decision itself. Remarks are only included in the email body for
-        # resubmission_required -- see submissions/emails.py.
-        if new_status != old_status:
-            try:
-                send_status_change_email(instance, old_status, new_status, remarks_text)
-            except Exception:
-                logger.exception(
-                    "Failed to send status-change email for submission %s",
-                    instance.submission_id,
-                )
+            # Schedule inside the transaction so an outer rollback cancels email.
+            # Channel failures are logged independently of persistence and push.
+            if new_status != old_status:
+                def notify_status():
+                    try:
+                        send_status_change_email(instance, old_status, new_status, remarks_text)
+                    except Exception:
+                        logger.exception("Failed to send status-change email for submission %s", instance.submission_id)
+                transaction.on_commit(notify_status)
 
-        if priority_was_added and instance.submitted_by and instance.submitted_by.role == "student":
-            try:
-                send_priority_change_email(instance)
-            except Exception:
-                logger.exception(
-                    "Failed to send priority email for submission %s",
-                    instance.submission_id,
-                )
+            if priority_was_added and instance.submitted_by and instance.submitted_by.role == "student":
+                def notify_priority():
+                    try:
+                        send_priority_change_email(instance)
+                    except Exception:
+                        logger.exception("Failed to send priority email for submission %s", instance.submission_id)
+                transaction.on_commit(notify_priority)
 
         if new_status == Submission.STATUS_APPROVED and (uploaded_files or report_files or drive_folder_id):
             instance.drive_sync_result = self._sync_to_drive(
