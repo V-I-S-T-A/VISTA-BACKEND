@@ -1,4 +1,5 @@
 from datetime import timedelta
+import time
 
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -93,3 +94,18 @@ class StudentNotificationReadView(StudentNotificationListView):
             notification.is_read = True
             notification.save(update_fields=["is_read"])
         return Response(NotificationSerializer(notification).data, status=status.HTTP_200_OK)
+
+
+class WebSocketTicketView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        ticket = signing.dumps(
+            {
+                "user_id": str(request.user.pk),
+                "role": request.user.role,
+                "exp": time.time() + 60,
+            },
+            salt="ws-ticket",
+        )
+        return Response({"ticket": ticket, "expires_in": 60})
