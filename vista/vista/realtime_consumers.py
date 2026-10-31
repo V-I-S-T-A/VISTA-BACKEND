@@ -28,6 +28,7 @@ class SubmissionEventsConsumer(AsyncJsonWebsocketConsumer):
         if not await self.authorize(ticket, self.submission_id):
             await self.close(code=4403)
             return
+        self.user_id = signing.loads(ticket, salt=SALT, max_age=45)["user_id"]
         self.group_name = f"submission.{self.submission_id}"
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()
@@ -36,7 +37,19 @@ class SubmissionEventsConsumer(AsyncJsonWebsocketConsumer):
         if hasattr(self, "group_name"):
             await self.channel_layer.group_discard(self.group_name, self.channel_name)
 
+    @database_sync_to_async
+    def still_authorized(self):
+        try:
+            user = get_user_model().objects.get(pk=self.user_id, is_active=True)
+            submission = Submission.objects.get(pk=self.submission_id)
+            return can_read_submission(user, submission)
+        except (get_user_model().DoesNotExist, Submission.DoesNotExist):
+            return False
+
     async def submission_changed(self, event):
+        if not await self.still_authorized():
+            await self.close(code=4403)
+            return
         # Send only IDs / event names. Fetch actual content through permission-checked REST APIs.
         await self.send_json({"type": "submission.changed",
                               "submission_id": self.submission_id,
