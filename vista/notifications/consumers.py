@@ -7,6 +7,7 @@ from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+from rest_framework.exceptions import AuthenticationFailed
 from .events import WS_TICKET_SALT
 
 
@@ -89,7 +90,7 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
         try:
             user_id, expiry = await self.verify(content)
             await self.activate(user_id, expiry)
-        except (InvalidToken, TokenError, signing.BadSignature, ValueError, KeyError,
+        except (InvalidToken, TokenError, AuthenticationFailed, signing.BadSignature, ValueError, KeyError,
                 TypeError, get_user_model().DoesNotExist):
             await self.close(code=4401)
 
@@ -120,7 +121,12 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json({"type": "notification.changed", "id": event["id"]})
 
     async def realtime_event(self, event):
-        if not self.authenticated or not await self.authorized_for_event(event["payload"]):
+        if not self.authenticated:
+            return
+        if not await self.active_user(self.user_id):
+            await self.close(code=4401)
+            return
+        if not await self.authorized_for_event(event["payload"]):
             # Do not leak events from stale memberships or other users.
             return
         await self.send_json(event["payload"])

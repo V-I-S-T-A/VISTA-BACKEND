@@ -1,41 +1,31 @@
-# VISTA real-time review updates
+# Shared realtime infrastructure / Railway deployment
 
-This feature starts from `main` and adds submission-scoped, read-only WebSocket events. Existing REST endpoints remain responsible for writing replies and status changes.
+This draft implements the shared VISTA `/ws/notifications/` contract specified in the Production Recovery and Shared WebSocket Real-Time Infrastructure Report.
 
-## Railway configuration
+## Railway
+- Keep build context rooted at `vista/`. `Dockerfile` installs UTF-8 `requirements.txt` and starts Daphne with `PORT`; `entrypoint.sh` retains database checks, migrations, and static collection.
+- Keep PostgreSQL, Gmail API, Google Drive, Celery and Expo push settings intact.
+- Configure `ALLOWED_HOSTS` with the backend hostname.
+- Configure `CORS_ALLOWED_ORIGINS` with the VISTA-WEB HTTPS origin, e.g. `https://vista-ustp.up.railway.app`. WebSocket origins use this allow-list.
+- Set `NOTIFICATION_REDIS_URL`, `REDIS_URL` or `CELERY_BROKER_URL` to shared, reachable Redis. Do not clear Redis or Celery queues.
 
-- Build context/root directory: `vista/`. The Dockerfile installs `requirements.txt` and starts Daphne through the existing `entrypoint.sh`.
-- Keep the database variables and Google Drive, email, and Celery variables unchanged.
-- Configure `CORS_ALLOWED_ORIGINS` to include the **exact** production web origin (e.g. `https://your-frontend.example`). WebSocket handshakes reject untrusted origins.
-- Configure `NOTIFICATION_REDIS_URL` for a reachable Redis instance (or ensure `CELERY_BROKER_URL` points to one). Redis channels must be shared by all server processes.
-- Ensure `ALLOWED_HOSTS` includes the backend hostname and Railway supports WebSocket upgrade.
-- Do not merge both repository PRs until the backend is deployed and `POST /api/realtime/submissions/<uuid>/ticket/` is available.
+## WebSocket contract
+- URL: `wss://<backend-host>/ws/notifications/`
+- Browser or mobile sends `{"token":"<JWT>"}` within 10 seconds of opening, or a signed `{"ticket":"..."}` from `POST /api/notifications/ws-ticket/`.
+- An authenticated Django session is also accepted. Successful authentication returns `{"type":"ready","user_id":"...","role":"..."}`.
+- Optional `{"type":"ping"}` returns `{"type":"pong"}`.
+- JWT connections close on JWT expiry. Clients reconnect with backoff and refetch missed data.
+- User connections join `notifications.<user_id>`; staff/admin also join `staff_users`.
+- Events: `submission.created`, `submission.updated`, `review_log.created`, `review_reply.created`, `notification.created`, `notification.read`. Every event has version 1, event_id, occurred_at, and relevant IDs. Legacy `notification.changed` remains for mobile.
+- All event content is metadata only. REST remains authoritative for reply text, documents, personal data, and permissions.
 
-## How it works
-
-1. The authorized browser POSTs to the ticket REST endpoint with its existing JWT.
-2. A short-lived (45-second), signed ticket is returned, scoped to one user and submission.
-3. The browser opens `wss://<backend>/ws/submissions/<uuid>/?ticket=...`.
-4. The WebSocket consumer checks that the user is active and can read the submission using `submissions.visibility.can_read_submission`.
-5. After the database transaction commits, Django broadcasts an event for new ReviewLog or ReviewReply objects.
-6. Clients refetch the affected content using the original permission-checked REST APIs. Events carry no reply body.
-
-The existing student reply restrictions still apply: organization members can only read eligible submissions, whereas only the submitter and authorized staff can post replies.
-
-## Local verification
-
+## Verification before merging
 ```bash
 python -m pip install -r requirements.txt
 python manage.py check
-python manage.py test vista.test_realtime review_logs.test_replies
+python manage.py test notifications.test_realtime review_logs.test_replies
 daphne -b 0.0.0.0 -p 8000 vista.asgi:application
 ```
+Run the full Django regression suite on isolated test DB, plus `npm run build` and frontend tests for VISTA-WEB. Test two independent browser sessions, mobile notification runtime, membership changes, unknown JWTs, reconnects, status changes, and reply events. Verify Railway staging before releasing both PRs.
 
-For local development, set `CORS_ALLOWED_ORIGINS=http://localhost:5173` and start Redis. Connect with two browser sessions to the same submission and confirm new remarks, replies, and status history appear without refresh. Verify nonmembers get 403 from ticket issuance, and that changing membership revokes REST access.
-
-## Operational notes
-
-- Existing Celery workers must continue running separately.
-- During deployment, coordinate backend and frontend releases. Keep the two PRs unmerged until smoke tests pass.
-- The frontend uses a 30-second fallback poll for individual reply threads, with immediate refetch on reconnect.
-- A running WebSocket session needs explicit revocation checks for sensitive real-time payloads; this implementation sends only event types and submission identifiers, never document content.
+**Not yet verified:** the 12 integration test / 131 regression test results described in the reference report are not claims about this PR. These new changes need independent CI and runtime validation.
