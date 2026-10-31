@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 import os
+import sys
 import cloudinary
 
 from decouple import config
@@ -31,6 +32,7 @@ def _parse_bool(value):
     return str(value).lower() in ("1", "true", "yes", "on")
 
 DEBUG = config("DEBUG", default=False, cast=_parse_bool)
+IS_TESTING = 'test' in sys.argv
 
 ALLOWED_HOSTS = [
     host.strip()
@@ -155,7 +157,7 @@ WSGI_APPLICATION = 'vista.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-DATABASES = {
+DATABASES = {'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': ':memory:'}} if IS_TESTING else {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': config('DB_NAME'),
@@ -244,7 +246,7 @@ ASGI_APPLICATION = 'vista.asgi.application'
 NOTIFICATION_REDIS_URL = (config('NOTIFICATION_REDIS_URL', default='')
     or config('REDIS_URL', default='')
     or config('REDISPRIVATE_URL', default=''))
-CHANNEL_LAYERS = {'default': {
+CHANNEL_LAYERS = {'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'}} if IS_TESTING else {'default': {
     'BACKEND': 'channels_redis.core.RedisChannelLayer',
     'CONFIG': {'hosts': [NOTIFICATION_REDIS_URL or CELERY_BROKER_URL]},
 }} if NOTIFICATION_REDIS_URL or not DEBUG else {'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'}}
@@ -259,6 +261,9 @@ CACHES = {
         'KEY_PREFIX': 'vista-push',
     },
 }
+if IS_TESTING:
+    CACHES['push_delivery'] = {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}
+
 CELERY_BEAT_SCHEDULE = {
     'purge-expired-notifications': {
         'task': 'notifications.tasks.purge_expired_notifications', 'schedule': 3600.0,
