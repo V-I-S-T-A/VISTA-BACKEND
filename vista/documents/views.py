@@ -26,11 +26,9 @@ class DocumentViewSet(viewsets.ModelViewSet):
         return DocumentSerializer
 
     def get_permissions(self):
-        if self.action == "destroy":
-            return [IsAuthenticated(), IsAdminOrStaff()]
-        if self.action in ("retrieve", "update", "partial_update"):
-            return [IsAuthenticated(), IsSubmissionOwnerOrAdminOrStaff()]
-        return [IsAuthenticated()]
+        # Submission documents are staff-managed. Students receive submission
+        # metadata, but never document URLs or document endpoint access.
+        return [IsAuthenticated(), IsAdminOrStaff()]
 
     def get_queryset(self):
         queryset = super().get_queryset()

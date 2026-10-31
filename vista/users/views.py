@@ -15,12 +15,13 @@ from rest_framework.exceptions import PermissionDenied
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters
 
-from .models import User
+from .models import User, OrganizationMembershipAudit
 from .serializers import (
     UserSerializer,
     ProfileSerializer,
     UserCreateSerializer,
     UserUpdateSerializer,
+    VerifyOrganizationJoiningSerializer,
     ChangePasswordSerializer,
     LoginSerializer,
     PasswordResetRequestSerializer,
@@ -64,13 +65,44 @@ class UserViewSet(viewsets.ModelViewSet):
         return UserSerializer
 
     def get_permissions(self):
-        if self.action in ("create", "destroy", "resend_invitation"):
+        if self.action in ("create", "destroy", "resend_invitation", "verify_organization_joining"):
             return [IsAuthenticated(), IsAdmin()]
         if self.action in ("update", "partial_update", "retrieve"):
             return [IsAuthenticated(), IsSelfOrAdmin()]
         if self.action in ("list", "export_list", "summary"):
             return [IsAuthenticated(), IsAdminOrStaff()]
         return [IsAuthenticated()]
+
+    @action(detail=True, methods=["post"], url_path="verify-organization-joining")
+    def verify_organization_joining(self, request, *args, **kwargs):
+        """Administrator attests to documentary evidence for the CURRENT membership."""
+        target = self.get_object()
+        payload = VerifyOrganizationJoiningSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+        with transaction.atomic():
+            target = User.objects.select_for_update().get(pk=target.pk)
+            if not target.org_id_id or target.org_id_id != data["org_id"]:
+                return Response({"detail": "The current organization changed; reload the account."}, status=409)
+            if target.org_joined_at != data["expected_joined_at"]:
+                # An identical retry is safe, but an earlier membership period is never restored.
+                verified = target.membership_audits.filter(
+                    reason="verification", joined_at=data["joined_at"], evidence=data["evidence"],
+                    actor=request.user, org_id_value=data["org_id"],
+                ).first()
+                latest = target.membership_audits.first()
+                if not (target.org_joined_at == data["joined_at"] and verified and latest.pk == verified.pk):
+                    return Response({"detail": "The membership period changed; reload and verify its latest joining date."}, status=409)
+            if target.org_joined_at != data["joined_at"]:
+                OrganizationMembershipAudit.objects.create(
+                    user=target, actor=request.user, previous_org_id=target.org_id_id,
+                    org_id_value=target.org_id_id, previous_joined_at=target.org_joined_at,
+                    joined_at=data["joined_at"], reason="verification", evidence=data["evidence"],
+                )
+                # Deliberately bypass automatic assignment timestamps, inside the same lock/transaction.
+                User.objects.filter(pk=target.pk).update(org_joined_at=data["joined_at"])
+                target.org_joined_at = data["joined_at"]
+        return Response(ProfileSerializer(target).data)
 
     @action(detail=False, methods=["get"])
     def summary(self, request):
@@ -206,6 +238,7 @@ class LoginView(APIView):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data["user"]
+        is_first_login = user.last_login is None
         tokens = serializer.get_tokens(user)
         
         # Log the login ---
@@ -220,6 +253,7 @@ class LoginView(APIView):
             {
                 "user": UserSerializer(user).data,
                 "tokens": tokens,
+                "is_first_login": is_first_login,
             },
             status=status.HTTP_200_OK,
         )
@@ -256,7 +290,7 @@ class MeView(APIView):
             request.user, data=request.data, partial=True, context={"request": request}
         )
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        user = serializer.save()
         
         # Track self-edits ---
         log_update(
@@ -266,7 +300,7 @@ class MeView(APIView):
             new_data={"profile": "updated"}
         )
         
-        return Response(ProfileSerializer(request.user).data)
+        return Response(ProfileSerializer(user).data)
 
 
 class ChangePasswordView(APIView):

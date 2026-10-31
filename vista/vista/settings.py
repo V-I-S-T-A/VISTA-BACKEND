@@ -57,6 +57,7 @@ CSRF_COOKIE_SECURE = not DEBUG
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -202,6 +203,7 @@ CELERY_BROKER_URL = config('CELERY_BROKER_URL', default='redis://localhost:6379/
 CELERY_RESULT_BACKEND = config('CELERY_RESULT_BACKEND', default='redis://localhost:6379/0')
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
+CELERY_TASK_DEFAULT_QUEUE = config('CELERY_TASK_DEFAULT_QUEUE', default='celery')
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
 
@@ -213,7 +215,7 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 MEDIA_ROOT = BASE_DIR / 'media'
 MEDIA_URL = '/media/'
 
-#change password 
+#change password
 RESEND_API_KEY = config('RESEND_API_KEY', default='')
 EMAIL_BACKEND = config(
     'EMAIL_BACKEND',
@@ -234,3 +236,26 @@ EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
 EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='VISTA <no-reply@vista.local>')
+
+ASGI_APPLICATION = 'vista.asgi.application'
+NOTIFICATION_REDIS_URL = config('NOTIFICATION_REDIS_URL', default='')
+CHANNEL_LAYERS = {'default': {
+    'BACKEND': 'channels_redis.core.RedisChannelLayer',
+    'CONFIG': {'hosts': [NOTIFICATION_REDIS_URL or CELERY_BROKER_URL]},
+}} if NOTIFICATION_REDIS_URL or not DEBUG else {'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'}}
+EXPO_ACCESS_TOKEN = config('EXPO_ACCESS_TOKEN', default='')
+NOTIFICATIONS_PUSH_ENABLED = config('NOTIFICATIONS_PUSH_ENABLED', default=False, cast=bool)
+# Cross-worker deduplication for accepted push tickets. Uses the existing Redis.
+CACHES = {
+    'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'},
+    'push_delivery': {
+        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+        'LOCATION': NOTIFICATION_REDIS_URL or CELERY_BROKER_URL,
+        'KEY_PREFIX': 'vista-push',
+    },
+}
+CELERY_BEAT_SCHEDULE = {
+    'purge-expired-notifications': {
+        'task': 'notifications.tasks.purge_expired_notifications', 'schedule': 3600.0,
+    },
+}

@@ -31,6 +31,7 @@ from .serializers import (
 )
 from .filters import SubmissionFilter
 from .permissions import IsOwnerOrAdminOrStaff
+from .visibility import student_submission_scope
 from .pdf_generator import generate_list_pdf, generate_detail_pdf
 from users.permissions import IsAdminOrStaff
 from vista.pagination import StandardResultsPagination
@@ -182,7 +183,7 @@ class SubmissionViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if user.role in ("admin", "staff"):
             return queryset
-        return queryset.filter(submitted_by=user)
+        return queryset.filter(student_submission_scope(user))
 
     # Override perform_create to log creation ---
     def perform_create(self, serializer):
@@ -395,7 +396,7 @@ class SubmissionViewSet(viewsets.ModelViewSet):
         )
         serializer.is_valid(raise_exception=True)
         updated_submission = serializer.save()
-
+        old_status = updated_submission._previous_status
 
         # Log the specific status change
         if old_status != submission.status:
@@ -646,6 +647,19 @@ class SubmissionViewSet(viewsets.ModelViewSet):
         return Response(serializer.data, status=http_status.HTTP_200_OK)
 
     # --- NEW: OCR autofill draft endpoint ---------------------------------
+    @action(detail=False, methods=['post'], url_path='prepare-attachment', parser_classes=[MultiPartParser, FormParser])
+    def prepare_attachment(self, request):
+        import base64
+        from documents.webp import attachment_webp
+        uploaded = request.FILES.get('file')
+        if not uploaded:
+            return Response({'detail': 'Choose a PDF or image.'}, status=400)
+        try:
+            data, name, dimensions = attachment_webp(uploaded)
+        except Exception as error:
+            return Response({'detail': str(error) if isinstance(error, ValueError) else 'Could not render this file. Use a valid PDF or image.'}, status=400)
+        return Response({'name': name, 'type': 'image/webp', 'base64': base64.b64encode(data).decode('ascii'), 'width': dimensions[0], 'height': dimensions[1], 'size': len(data)})
+
     @action(
         detail=False, methods=["post"], url_path="autofill",
         parser_classes=[MultiPartParser],

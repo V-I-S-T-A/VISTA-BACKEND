@@ -4,6 +4,7 @@ from .models import Notification
 
 
 class NotificationSerializer(serializers.ModelSerializer):
+    is_priority = serializers.BooleanField(source="submission_id.priority_escalation", read_only=True)
     submission_title = serializers.CharField(source="submission_id.title", read_only=True)
     submission_status = serializers.CharField(source="submission_id.status", read_only=True)
     actor_name = serializers.CharField(source="actor.full_name", read_only=True, allow_null=True)
@@ -14,6 +15,6 @@ class NotificationSerializer(serializers.ModelSerializer):
         fields = [
             "notification_id", "submission_id", "submission_title",
             "submission_status", "type", "message", "is_read", "created_at",
-            "actor_name", "actor_image_url",
+            "actor_name", "actor_image_url", "is_priority",
         ]
         read_only_fields = fields

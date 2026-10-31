@@ -1,5 +1,41 @@
 # Users API Documentation
 
+## Verified organization joining dates (local feature revision, 2026-10-31)
+
+User/profile responses add read-only `org_joined_at`. Legacy accounts remain NULL
+until their latest actual joining time is verified. NULL never grants shared
+organization access. New assignments, transfers and rejoining record server time;
+leaving clears it. Saving the same organization or unrelated profile details leaves
+it unchanged. Assignments through the API remain administrator-controlled; student
+self-service organization changes are rejected. Submissions retain their stored
+organization after a submitter transfers.
+
+An administrator with documentary evidence can correct the CURRENT membership via
+`POST /api/users/{user_id}/verify-organization-joining/`:
+
+```json
+{
+  "org_id": "b7a1d5e7-7890-4c2f-8d6b-3e4f5a6b7c8d",
+  "expected_joined_at": null,
+  "joined_at": "2026-08-15T09:00:00+08:00",
+  "evidence": "Verified membership register, signed entry reference"
+}
+```
+
+Use the current profile's date (or NULL) for `expected_joined_at`; stale membership
+periods/organizations return 409. `joined_at` requires an explicit timezone and must
+not be in the future. Evidence is mandatory, limited to 2,000 characters. Keep
+references to verified records; do not use account/deployment dates or inferred
+dates. A successful correction and its actor, evidence, old/new date and organization
+are stored atomically in `OrganizationMembershipAudit`. Identical retries do not
+add another event. Administrators can inspect the immutable audit entries in Django
+admin. There is no ordinary profile/backdating field for clients.
+
+Bulk/raw assignment writes bypass model hooks and are not a supported membership
+workflow. Existing supported API and Django-admin assignments use the guarded model
+save. Apply the new migrations only in an explicitly authorized environment; no
+historical dates are invented by the migration.
+
 Base URL: `/api/`
 
 ## Model

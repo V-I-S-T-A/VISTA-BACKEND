@@ -1,4 +1,5 @@
 from rest_framework.permissions import BasePermission, SAFE_METHODS
+from .visibility import can_read_submission
 
 
 class IsOwnerOrAdminOrStaff(BasePermission):
@@ -9,5 +10,5 @@ class IsOwnerOrAdminOrStaff(BasePermission):
         if request.user.role in ("admin", "staff"):
             return True
         if request.method in SAFE_METHODS:
-            return obj.submitted_by_id == request.user.user_id
+            return can_read_submission(request.user, obj)
         return obj.submitted_by_id == request.user.user_id and obj.status == "pending"

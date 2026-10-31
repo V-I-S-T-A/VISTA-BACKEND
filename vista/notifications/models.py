@@ -22,3 +22,9 @@ class Notification(models.Model):
 
     class Meta:
         db_table = "tbl_Notifications"
+
+
+class PushDevice(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    token = models.CharField(max_length=255, unique=True)
+    updated_at = models.DateTimeField(auto_now=True)

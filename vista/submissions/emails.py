@@ -26,7 +26,7 @@ LOCAL_TZ = ZoneInfo("Asia/Manila")
 
 STATUS_LABELS = {
     "pending": "Pending",
-    "under_review": "Under Review",
+    "under_review": "On Process",
     "approved": "Approved",
     "rejected": "Rejected",
     "resubmission_required": "Resubmission Required",
@@ -221,6 +221,31 @@ def send_status_change_email(submission, old_status, new_status, remarks_text=""
             submission.submission_id,
         )
     return sent
+
+
+def send_submission_received_email(submission):
+    """Receipt for a newly saved entry, addressed only to its submitter."""
+    submitter = submission.submitted_by
+    if not submitter or not submitter.email:
+        return 0
+    name = submitter.get_full_name() or submitter.email
+    url = _submission_url(submission)
+    message = EmailMultiAlternatives(
+        subject=f'VISTA: "{submission.title}" has been received',
+        body=(f'Dear {name},\n\nYour submission, "{submission.title}", has been received '
+              f'and is now On Process.\n\nView this submission: {url}\n\n'
+              'Office of Student Affairs\nThis is an automated message. Please do not reply.'),
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        to=[submitter.email],
+    )
+    message.attach_alternative(
+        f'<html><body><p>Dear {escape(name)},</p><p>Your submission, '
+        f'<strong>{escape(submission.title)}</strong>, has been received and is now On Process.</p>'
+        f'<p><a href="{escape(url)}">View this submission</a></p>'
+        '<p>Office of Student Affairs</p><small>This is an automated message. Please do not reply.</small></body></html>',
+        'text/html',
+    )
+    return message.send(fail_silently=False)
 
 
 def send_priority_change_email(submission):
