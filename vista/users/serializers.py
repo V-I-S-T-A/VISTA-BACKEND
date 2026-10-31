@@ -7,7 +7,25 @@ from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
+from django.db import transaction
 from .models import User
+
+
+class VerifyOrganizationJoiningSerializer(serializers.Serializer):
+    org_id = serializers.UUIDField()
+    expected_joined_at = serializers.DateTimeField(allow_null=True, required=True)
+    joined_at = serializers.DateTimeField()
+    evidence = serializers.CharField(max_length=2000, allow_blank=False)
+
+    def validate_joined_at(self, value):
+        raw = self.initial_data.get("joined_at")
+        parsed = parse_datetime(raw) if isinstance(raw, str) else None
+        if parsed is None or timezone.is_naive(parsed):
+            raise serializers.ValidationError("Include an explicit timezone offset or Z.")
+        if value > timezone.now():
+            raise serializers.ValidationError("Joining time cannot be in the future.")
+        return value
 
 
 def generate_temp_password(length=12):
@@ -30,15 +48,16 @@ def generate_temp_password(length=12):
 
 class UserSerializer(serializers.ModelSerializer):
     department = serializers.CharField(source='org_id.name', read_only=True)
+    org_image_url = serializers.URLField(source='org_id.image_url', read_only=True, allow_null=True)
 
     class Meta:
         model = User
         fields = [
             "user_id", "org_id", "first_name", "last_name", "email",
-            "role", "image_url", "is_active", "last_login", "department",
-            "must_change_password", "created_at", "updated_at",
+            "role", "image_url", "is_active", "last_login", "department", "org_image_url",
+            "must_change_password", "created_at", "updated_at", "org_joined_at",
         ]
-        read_only_fields = ["user_id", "must_change_password", "created_at", "updated_at"]
+        read_only_fields = ["user_id", "must_change_password", "created_at", "updated_at", "org_joined_at"]
 
 
 class ProfileSerializer(UserSerializer):
@@ -72,7 +91,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
         image = validated_data.pop("image", None)
         temp_password = generate_temp_password()
 
-        user = User.objects.create_user(password=temp_password, **validated_data)
+        user = User.objects.create_user(password=temp_password, membership_actor=self.context["request"].user, **validated_data)
         user.must_change_password = True
         user.save(update_fields=["must_change_password"])
 
@@ -112,6 +131,13 @@ class UserUpdateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Enter 10 mobile digits starting with 9, e.g. 912-345-6789.")
         return "+63" + digits
 
+    def validate_org_id(self, value):
+        request = self.context.get("request")
+        if not request or request.user.role != "admin":
+            if not self.instance or self.instance.org_id_id != (value.pk if value else None):
+                raise serializers.ValidationError("Only an admin can change organization membership.")
+        return value
+
     def validate_birth_date(self, value):
         if value and value > timezone.localdate():
             raise serializers.ValidationError("Birth date cannot be in the future.")
@@ -129,7 +155,15 @@ class UserUpdateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Only an admin can change active status.")
         return value
 
+    @transaction.atomic
     def update(self, instance, validated_data):
+        instance = User.objects.select_for_update().get(pk=instance.pk)
+        request = self.context.get("request")
+        instance._membership_actor = request.user if request else None
+        if "org_id" in validated_data and (not request or request.user.role != "admin"):
+            proposed = validated_data["org_id"]
+            if instance.org_id_id != (proposed.pk if proposed else None):
+                raise serializers.ValidationError({"org_id": "The membership changed; reload your profile."})
         image = validated_data.pop("image", None)
         remove_image = validated_data.pop("remove_image", False)
         instance = super().update(instance, validated_data)

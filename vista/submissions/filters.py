@@ -30,4 +30,4 @@ class SubmissionFilter(django_filters.FilterSet):
 
     class Meta:
         model = Submission
-        fields = ["status", "org_id", "category_id", "doc_type_id", "academic_year_id", "submitted_by", "submitted_after", "submitted_before", "priority_escalation"]
+        fields = ["status", "org_id", "category_id", "doc_type_id", "academic_year_id", "submitted_by", "submitted_after", "submitted_before", "priority_escalation"]

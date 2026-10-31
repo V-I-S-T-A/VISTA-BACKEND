@@ -41,6 +41,7 @@ class Submission(models.Model):
         indexes = [
             models.Index(fields=["submitted_by", "status"], name="sub_submitter_status_idx"),
             models.Index(fields=["org_id", "status"], name="sub_org_status_idx"),
+            models.Index(fields=["org_id", "submitted_at"], name="sub_org_submitted_idx"),
             models.Index(fields=["status", "-submitted_at"], name="sub_status_date_idx"),
             models.Index(fields=["-submitted_at"], name="sub_submitted_at_idx"),
         ]
