@@ -99,13 +99,13 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
         user = get_user_model().objects.filter(pk=self.user_id, is_active=True).first()
         if not user:
             return False
+        if payload.get("type", "").startswith("notification."):
+            from .models import Notification
+            return Notification.objects.filter(pk=payload.get("notification_id"), user_id=user).exists()
         if self.role in ("staff", "admin"):
             return user.role in ("staff", "admin")
         if user.role != "student":
             return False
-        if payload.get("type", "").startswith("notification."):
-            from .models import Notification
-            return Notification.objects.filter(pk=payload.get("notification_id"), user_id=user).exists()
         submission_id = payload.get("submission_id")
         if not submission_id:
             return False
