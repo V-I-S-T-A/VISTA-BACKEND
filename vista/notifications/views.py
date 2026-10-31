@@ -93,3 +93,13 @@ class StudentNotificationReadView(StudentNotificationListView):
             notification.is_read = True
             notification.save(update_fields=["is_read"])
         return Response(NotificationSerializer(notification).data, status=status.HTTP_200_OK)
+
+class WebSocketTicketView(APIView):
+    permission_classes = [IsAuthenticated, IsNotificationRecipient]
+
+    def post(self, request):
+        from .events import WS_TICKET_SALT
+        return Response({
+            "ticket": signing.dumps({"user_id": str(request.user.pk)}, salt=WS_TICKET_SALT),
+            "expires_in": 60,
+        })

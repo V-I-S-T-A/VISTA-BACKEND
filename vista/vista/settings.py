@@ -27,7 +27,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = config('DJANGO_SECRET_KEY', default='django-insecure-y%%+u8$@fyi8t8$%n9qhxx5g$g6&5d$i3*%xesll40!%cmbebx')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = config("DEBUG", default=False, cast=bool)
+def _parse_bool(value):
+    return str(value).lower() in ("1", "true", "yes", "on")
+
+DEBUG = config("DEBUG", default=False, cast=_parse_bool)
 
 ALLOWED_HOSTS = [
     host.strip()
@@ -238,7 +241,9 @@ EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='VISTA <no-reply@vista.local>')
 
 ASGI_APPLICATION = 'vista.asgi.application'
-NOTIFICATION_REDIS_URL = config('NOTIFICATION_REDIS_URL', default='')
+NOTIFICATION_REDIS_URL = (config('NOTIFICATION_REDIS_URL', default='')
+    or config('REDIS_URL', default='')
+    or config('REDISPRIVATE_URL', default=''))
 CHANNEL_LAYERS = {'default': {
     'BACKEND': 'channels_redis.core.RedisChannelLayer',
     'CONFIG': {'hosts': [NOTIFICATION_REDIS_URL or CELERY_BROKER_URL]},

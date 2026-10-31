@@ -1,4 +1,4 @@
-﻿amqp==5.3.1
+amqp==5.3.1
 asgiref==3.11.1
 billiard==4.2.4
 cachetools==5.5.2
@@ -13,6 +13,11 @@ click-repl==0.3.0
 channels==4.3.2
 channels-redis==4.3.0
 daphne==4.2.3
+Twisted>=24.0.0
+autobahn==24.4.2
+service-identity==24.2.0
+pyOpenSSL==25.0.0
+gunicorn==23.0.0
 cloudinary==1.45.0
 colorama==0.4.6
 cryptography==44.0.0
