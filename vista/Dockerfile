@@ -33,4 +33,4 @@ RUN chmod +x /app/entrypoint.sh
 
 ENTRYPOINT ["/app/entrypoint.sh"]
 
-CMD ["/bin/sh", "-c", "exec gunicorn vista.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 3 --timeout 120"]
+CMD ["/bin/sh", "-c", "exec daphne -b 0.0.0.0 -p ${PORT:-8000} vista.asgi:application"]
