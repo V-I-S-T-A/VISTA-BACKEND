@@ -7,20 +7,61 @@ from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from users.permissions import IsStudent
 from .models import Notification
 from .serializers import NotificationSerializer
+from .models import PushDevice
+from rest_framework import serializers
+from django.core import signing
+from rest_framework.permissions import AllowAny
+from .devices import bind_device, revocation_key, revoke_device
+
+
+class PushDeviceSerializer(serializers.Serializer):
+    token = serializers.RegexField(r'^(ExponentPushToken|ExpoPushToken)\[[A-Za-z0-9_-]+\]$', max_length=255)
+    previous_token = serializers.RegexField(r'^(ExponentPushToken|ExpoPushToken)\[[A-Za-z0-9_-]+\]$', max_length=255, required=False)
+
+
+class PushDeviceView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        payload = PushDeviceSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        device = bind_device(request.user, **payload.validated_data)
+        return Response({'registered': True, 'revoke_key': revocation_key(device)})
+
+    def delete(self, request):
+        payload = PushDeviceSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        PushDevice.objects.filter(user=request.user, token=payload.validated_data['token']).delete()
+        return Response(status=204)
+
+
+class PushDeviceRevokeView(APIView):
+    # A signed, device/binding-scoped credential permits cleanup even after the
+    # user's JWT expires. It grants no read, registration, or user permissions.
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        key = request.data.get('revoke_key')
+        if not isinstance(key, str) or len(key) > 2048:
+            return Response({'detail': 'Invalid revocation credential.'}, status=400)
+        try:
+            revoke_device(key)
+        except (signing.BadSignature, KeyError, ValueError, TypeError):
+            return Response({'detail': 'Invalid revocation credential.'}, status=400)
+        return Response(status=204)
 
 
 class IsNotificationRecipient(BasePermission):
     def has_permission(self, request, view):
-        return bool(
-            request.user
-            and request.user.is_authenticated
-            and request.user.role in ("student", "staff", "admin")
-        )
+        return bool(request.user and request.user.is_authenticated
+                    and request.user.role in ("student", "staff", "admin"))
 
 
-class NotificationListView(APIView):
+class StudentNotificationListView(APIView):
     permission_classes = [IsAuthenticated, IsNotificationRecipient]
 
     def get_queryset(self, request):
@@ -37,13 +78,13 @@ class NotificationListView(APIView):
         })
 
 
-class NotificationUnreadCountView(NotificationListView):
+class StudentNotificationUnreadCountView(StudentNotificationListView):
     def get(self, request):
         unread_count = self.get_queryset(request).filter(is_read=False).count()
         return Response({"unread_count": unread_count})
 
 
-class NotificationReadView(NotificationListView):
+class StudentNotificationReadView(StudentNotificationListView):
     def post(self, request, notification_id):
         notification = get_object_or_404(
             self.get_queryset(request), notification_id=notification_id,

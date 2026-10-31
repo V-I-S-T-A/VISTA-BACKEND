@@ -1,13 +1,17 @@
 from django.urls import path
 
 from .views import (
-    NotificationListView,
-    NotificationReadView,
-    NotificationUnreadCountView,
+    PushDeviceView,
+    PushDeviceRevokeView,
+    StudentNotificationListView,
+    StudentNotificationReadView,
+    StudentNotificationUnreadCountView,
 )
 
 urlpatterns = [
-    path("notifications/", NotificationListView.as_view(), name="notifications-list"),
-    path("notifications/unread-count/", NotificationUnreadCountView.as_view(), name="notifications-unread-count"),
-    path("notifications/<uuid:notification_id>/read/", NotificationReadView.as_view(), name="notification-read"),
+    path("notifications/devices/", PushDeviceView.as_view(), name='push-devices'),
+    path("notifications/devices/revoke/", PushDeviceRevokeView.as_view(), name='push-device-revoke'),
+    path("notifications/", StudentNotificationListView.as_view(), name="notifications-list"),
+    path("notifications/unread-count/", StudentNotificationUnreadCountView.as_view(), name="notifications-unread-count"),
+    path("notifications/<uuid:notification_id>/read/", StudentNotificationReadView.as_view(), name="notification-read"),
 ]
