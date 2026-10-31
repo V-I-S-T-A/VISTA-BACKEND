@@ -26,8 +26,21 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = config('DJANGO_SECRET_KEY', default='django-insecure-y%%+u8$@fyi8t8$%n9qhxx5g$g6&5d$i3*%xesll40!%cmbebx')
 
+def _parse_bool(val, default=False):
+    if val is None:
+        return default
+    if isinstance(val, bool):
+        return val
+    s = str(val).strip().lower()
+    if s in ('true', '1', 't', 'yes', 'y'):
+        return True
+    if s in ('false', '0', 'f', 'no', 'n', '', 'release', 'production'):
+        return False
+    return default
+
+
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = config("DEBUG", default=False, cast=bool)
+DEBUG = config("DEBUG", default=False, cast=_parse_bool)
 
 ALLOWED_HOSTS = [
     host.strip()
@@ -160,16 +173,27 @@ WSGI_APPLICATION = 'vista.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('DB_NAME'),
-        'USER': config('DB_USER'),
-        'PASSWORD': config('DB_PASSWORD'),
-        'HOST': config('DB_HOST', default='localhost'),
-        'PORT': config('DB_PORT', default='5432'),
+import sys
+IS_TESTING = 'test' in sys.argv or config('TESTING', default=False, cast=_parse_bool)
+
+if IS_TESTING:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': ':memory:',
+        }
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': config('DB_NAME'),
+            'USER': config('DB_USER'),
+            'PASSWORD': config('DB_PASSWORD'),
+            'HOST': config('DB_HOST', default='localhost'),
+            'PORT': config('DB_PORT', default='5432'),
+        }
+    }
 
 
 # Password validation
@@ -246,22 +270,43 @@ EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='VISTA <no-reply@vista.local>')
 
 ASGI_APPLICATION = 'vista.asgi.application'
-NOTIFICATION_REDIS_URL = config('NOTIFICATION_REDIS_URL', default='')
-CHANNEL_LAYERS = {'default': {
-    'BACKEND': 'channels_redis.core.RedisChannelLayer',
-    'CONFIG': {'hosts': [NOTIFICATION_REDIS_URL or CELERY_BROKER_URL]},
-}} if NOTIFICATION_REDIS_URL or not DEBUG else {'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'}}
+NOTIFICATION_REDIS_URL = config('NOTIFICATION_REDIS_URL', default=config('REDIS_URL', default=config('REDISPRIVATE_URL', default='')))
+
+if IS_TESTING:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        }
+    }
+else:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {'hosts': [NOTIFICATION_REDIS_URL or CELERY_BROKER_URL]},
+        }
+    } if NOTIFICATION_REDIS_URL or not DEBUG else {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        }
+    }
+
 EXPO_ACCESS_TOKEN = config('EXPO_ACCESS_TOKEN', default='')
 NOTIFICATIONS_PUSH_ENABLED = config('NOTIFICATIONS_PUSH_ENABLED', default=False, cast=bool)
 # Cross-worker deduplication for accepted push tickets. Uses the existing Redis.
-CACHES = {
-    'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'},
-    'push_delivery': {
-        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
-        'LOCATION': NOTIFICATION_REDIS_URL or CELERY_BROKER_URL,
-        'KEY_PREFIX': 'vista-push',
-    },
-}
+if IS_TESTING:
+    CACHES = {
+        'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'},
+        'push_delivery': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'},
+    }
+else:
+    CACHES = {
+        'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'},
+        'push_delivery': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': NOTIFICATION_REDIS_URL or CELERY_BROKER_URL,
+            'KEY_PREFIX': 'vista-push',
+        },
+    }
 CELERY_BEAT_SCHEDULE = {
     'purge-expired-notifications': {
         'task': 'notifications.tasks.purge_expired_notifications', 'schedule': 3600.0,
