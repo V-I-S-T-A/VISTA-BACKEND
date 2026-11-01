@@ -13,7 +13,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from .models import ReviewLog, ReviewReply
 from .serializers import ReviewLogSerializer, ReviewReplySerializer, ReviewReplyCreateSerializer
 from .filters import ReviewLogFilter
-from .notifications import notify_staff_of_reply
+from .notifications import notify_staff_of_reply, notify_submitter_of_reply
 from vista.pagination import StandardResultsPagination
 from submissions.visibility import student_submission_scope, can_reply_to_submission
 from users.models import User
@@ -74,6 +74,8 @@ class ReviewLogViewSet(viewsets.ReadOnlyModelViewSet):
                     return Response({"detail": "This request ID was already used for a different reply."}, status=409)
                 if created and request.user.role == "student":
                     notify_staff_of_reply(reply)
+                elif created and request.user.role == "staff":
+                    notify_submitter_of_reply(reply)
                 return Response(ReviewReplySerializer(reply).data, status=201 if created else 200)
         log = self.get_object()
         queryset = log.replies.select_related("author", "parent_reply__author", "review_log__changed_by")

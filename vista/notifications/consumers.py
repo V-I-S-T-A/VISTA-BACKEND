@@ -85,8 +85,15 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
         })
 
     async def receive_json(self, content, **kwargs):
+        if not isinstance(content, dict):
+            await self.close(code=4401)
+            return
+
         # Handle ping
         if content.get("type") == "ping":
+            if not self.user:
+                await self.close(code=4401)
+                return
             await self.send_json({"type": "pong"})
             return
 

@@ -18,14 +18,17 @@ django_asgi_app = get_asgi_application()
 
 from channels.auth import AuthMiddlewareStack
 from channels.routing import ProtocolTypeRouter, URLRouter
-from channels.security.websocket import AllowedHostsOriginValidator
+from channels.security.websocket import OriginValidator
+from django.conf import settings
 from notifications.routing import websocket_urlpatterns
 
 application = ProtocolTypeRouter({
     "http": django_asgi_app,
-    "websocket": AllowedHostsOriginValidator(
+    "websocket": OriginValidator(
         AuthMiddlewareStack(
             URLRouter(websocket_urlpatterns)
-        )
+        ),
+        # Retain API origins accepted before this fix, including native clients.
+        [*settings.ALLOWED_HOSTS, *settings.CORS_ALLOWED_ORIGINS],
     ),
 })
