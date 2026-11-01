@@ -5,6 +5,25 @@ from .models import ReviewLog
 logger = logging.getLogger(__name__)
 
 
+def notify_submitter_of_reply(reply):
+    """Create the Staff reply alert in the reply transaction, for its Student owner only."""
+    submission = reply.review_log.submission_id
+    recipient = submission.submitted_by
+    if (not recipient or recipient.role != "student" or not recipient.is_active
+            or recipient.pk == reply.author_id):
+        return None
+    title = (submission.title or "").strip()
+    author_name = reply.author.full_name if reply.author else "OSA Staff"
+    message = f'{author_name} replied to your submission "{title}".' if title else f'{author_name} replied to your submission.'
+    return Notification.objects.create(
+        user_id=recipient,
+        actor=reply.author,
+        submission_id=submission,
+        type="review_reply_created",
+        message=message,
+    )
+
+
 def get_responsible_staff_for_reply(reply):
     """
     Identifies the authorized staff/admin member responsible for the review entry or submission.

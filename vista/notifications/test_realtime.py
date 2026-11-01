@@ -58,10 +58,28 @@ class RealtimeConsumerTests(IsolatedAsyncioTestCase):
     async def test_ping_pong_response(self):
         connection = WebsocketCommunicator(NotificationConsumer.as_asgi(), "/ws/notifications/")
         await connection.connect()
+        with patch.object(NotificationConsumer, "authenticate_token", AsyncMock(return_value=("ping-user", "student", time.time() + 60))):
+            await connection.send_json_to({"token": "test"})
+            self.assertEqual((await connection.receive_json_from())["type"], "ready")
         await connection.send_json_to({"type": "ping"})
         response = await connection.receive_json_from()
         self.assertEqual(response.get("type"), "pong")
         await connection.disconnect()
+
+    async def test_unauthenticated_ping_is_rejected(self):
+        connection = WebsocketCommunicator(NotificationConsumer.as_asgi(), "/ws/notifications/")
+        await connection.connect()
+        await connection.send_json_to({"type": "ping"})
+        self.assertEqual((await connection.receive_output())["code"], 4401)
+        await connection.disconnect()
+
+    async def test_non_object_auth_frame_is_rejected_without_consumer_crash(self):
+        for payload in ([], ["token"], "token", None):
+            connection = WebsocketCommunicator(NotificationConsumer.as_asgi(), "/ws/notifications/")
+            await connection.connect()
+            await connection.send_json_to(payload)
+            self.assertEqual((await connection.receive_output())["code"], 4401)
+            await connection.disconnect()
 
     async def test_user_channel_is_isolated(self):
         connection = WebsocketCommunicator(NotificationConsumer.as_asgi(), "/ws/notifications/")

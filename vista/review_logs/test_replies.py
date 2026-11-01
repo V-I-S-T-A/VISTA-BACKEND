@@ -104,6 +104,21 @@ class ReviewReplyTests(TestCase):
         self.assertEqual(self.post("Changed", client_request_id=request_id).status_code, 409)
         self.assertEqual(self.client.get(self.path()).data["count"], 1)
 
+    def test_message_field_supports_text_url_and_combined_with_existing_retry_contract(self):
+        messages = ['Message only', 'https://example.test/document?ref=student',
+                    'Please see this document.\nhttps://example.test/document?ref=combined']
+        for message in messages:
+            request_id = str(uuid.uuid4())
+            first = self.post(message, client_request_id=request_id)
+            self.assertEqual(first.status_code, 201, first.data)
+            retry = self.post(message, client_request_id=request_id)
+            self.assertEqual(retry.status_code, 200, retry.data)
+            self.assertEqual(first.data['reply_id'], retry.data['reply_id'])
+        self.client.force_authenticate(self.staff)
+        rows = self.client.get(self.path()).data['results']
+        self.assertEqual([row['message'] for row in rows], messages)
+        self.assertEqual(ReviewReply.objects.filter(review_log=self.log).count(), 3)
+
     @patch("integrations.tasks.upload_document_to_drive.delay")
     @patch("notifications.tasks.send_push.delay")
     @patch("submissions.serializers.send_status_change_email")
@@ -203,8 +218,64 @@ class ReviewReplyTests(TestCase):
         self.client.force_authenticate(self.staff)
         res = self.post("Staff replying directly")
         self.assertEqual(res.status_code, 201)
-        # No staff notification created when staff replies
-        self.assertEqual(Notification.objects.count(), 0)
+        # Only the original Student receives the Staff reply alert.
+        self.assertEqual(Notification.objects.count(), 1)
+        self.assertEqual(Notification.objects.filter(user_id=self.staff).count(), 0)
+        self.assertEqual(Notification.objects.get().user_id, self.owner)
+
+    @patch('notifications.events.send_group_event')
+    def test_staff_reply_alert_is_submitter_only_retry_safe_and_published_after_commit(self, events):
+        self.client.force_authenticate(self.staff)
+        request_id = str(uuid.uuid4())
+        message = 'Staff response\nhttps://example.test/supporting-page'
+        with self.captureOnCommitCallbacks(execute=True):
+            first = self.post(message, client_request_id=request_id)
+            retry = self.post(message, client_request_id=request_id)
+            self.assertEqual(first.status_code, 201)
+            self.assertEqual(retry.status_code, 200)
+            self.assertEqual(first.data['reply_id'], retry.data['reply_id'])
+            events.assert_not_called()
+        notification = Notification.objects.get()
+        self.assertEqual(notification.user_id, self.owner)
+        self.assertEqual(notification.actor, self.staff)
+        self.assertEqual(notification.type, 'review_reply_created')
+        personal = [call.args for call in events.call_args_list if call.args[1]['type'] == 'notification.created']
+        self.assertEqual(len(personal), 1)
+        self.assertEqual(personal[0][0], f'notifications.{self.owner.pk}')
+        self.assertEqual(personal[0][1]['notification_id'], str(notification.pk))
+        self.assertEqual(personal[0][1]['submission_id'], str(self.entry.pk))
+        self.assertEqual(personal[0][1]['version'], 1)
+        for user, expected in [(self.owner, 1), (self.peer, 0), (self.outsider, 0), (self.staff, 0)]:
+            self.client.force_authenticate(user)
+            self.assertEqual(len(self.client.get('/api/notifications/').data['results']), expected)
+        self.client.force_authenticate(self.owner)
+        self.assertEqual(self.client.get(self.path()).data['results'][0]['message'], message)
+        self.assertEqual(self.client.get('/api/notifications/').data['results'][0]['submission_id'], self.entry.pk)
+
+    @patch('notifications.events.send_group_event')
+    def test_staff_reply_rollback_discards_reply_notification_and_events(self, events):
+        self.client.force_authenticate(self.staff)
+        with self.captureOnCommitCallbacks(execute=True):
+            with self.assertRaises(RuntimeError):
+                with transaction.atomic():
+                    self.assertEqual(self.post('Rolled-back Staff reply').status_code, 201)
+                    self.assertEqual(Notification.objects.filter(user_id=self.owner).count(), 1)
+                    events.assert_not_called()
+                    raise RuntimeError('rollback')
+        events.assert_not_called()
+        self.assertEqual(self.client.get(self.path()).data['count'], 0)
+        self.assertFalse(Notification.objects.exists())
+
+    def test_staff_reply_does_not_alert_a_staff_or_inactive_submitter(self):
+        self.client.force_authenticate(self.staff)
+        for submitter in [self.staff, self.admin]:
+            Submission.objects.filter(pk=self.entry.pk).update(submitted_by=submitter)
+            self.assertEqual(self.post('Staff-owned submission').status_code, 201)
+            self.assertFalse(Notification.objects.exists())
+        Submission.objects.filter(pk=self.entry.pk).update(submitted_by=self.owner)
+        User.objects.filter(pk=self.owner.pk).update(is_active=False)
+        self.assertEqual(self.post('Inactive submitter').status_code, 201)
+        self.assertFalse(Notification.objects.exists())
 
     def test_fallback_staff_resolution_when_log_changed_by_is_none(self):
         # Create a second staff user who made an earlier review
