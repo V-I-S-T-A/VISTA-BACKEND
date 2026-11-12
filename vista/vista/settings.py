@@ -95,6 +95,7 @@ INSTALLED_APPS = [
     'django_filters',
     'corsheaders',
     'cloudinary',
+    'app_releases',
 ]
 
 cloudinary.config(
