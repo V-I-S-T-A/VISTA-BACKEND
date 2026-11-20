@@ -156,7 +156,19 @@ class SubmissionViewSet(viewsets.ModelViewSet):
     pagination_class = StandardResultsPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = SubmissionFilter
-    search_fields = ["title", "description"]
+    # Staff use the shared submissions endpoint for both the review queue and
+    # submission history. Include the related organization and submitter fields
+    # so searches in those screens can find records by who submitted them or
+    # which organization they belong to.
+    search_fields = [
+        "title",
+        "description",
+        "org_id__name",
+        "org_id__acronym",
+        "submitted_by__first_name",
+        "submitted_by__last_name",
+        "submitted_by__email",
+    ]
     ordering_fields = ["submitted_at", "updated_at", "title", "status"]
     ordering = ["-submitted_at"]
 
