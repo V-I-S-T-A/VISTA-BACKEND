@@ -54,7 +54,7 @@ from typing import Optional
 
 from django.utils.translation import template
 from rapidfuzz import fuzz, process
-from PIL import Image
+from PIL import Image, ImageOps
 import pytesseract
 import cv2
 import numpy as np
@@ -206,14 +206,47 @@ def calculate_academic_year(text):
     else:
         return f"{year - 1}-{year}"
 
-def extract_organization(text):
-    # stop capturing when it hits Category, Vision, or a newline
-    org_match = re.search(r'Name of Organization:\s*(.*?)(?:Category:|Vision:|\n|$)', text, re.IGNORECASE)
-    if org_match:
-        clean_org = org_match.group(1).replace('_', '').strip()
-        if clean_org:
-            return clean_org
+def read_organization_entry(page):
+    """Locate the entry between its printed labels in the original photograph."""
+    page = ImageOps.exif_transpose(page)
+    rotations = (None, Image.Transpose.ROTATE_180)
+    if page.height > page.width:
+        rotations = (Image.Transpose.ROTATE_90, Image.Transpose.ROTATE_270)
+    for rotation in rotations:
+        upright = page.transpose(rotation) if rotation is not None else page
+        words = pytesseract.image_to_data(
+            upright, config="--psm 11", output_type=pytesseract.Output.DICT
+        )
+        labels = [word.lower().strip(" :.") for word in words["text"]]
+        for i, label in enumerate(labels):
+            if label != "organization" or labels[max(i - 2, 0):i] != ["name", "of"]:
+                continue
+            x = words["left"][i] + words["width"][i]
+            y, h = words["top"][i], words["height"][i]
+            for j, end_label in enumerate(labels):
+                right = words["left"][j]
+                end_y = words["top"][j]
+                if end_label == "category" and right - x > h and abs(end_y - y) < h:
+                    crop = upright.crop((x + 1, y - h, right - 1, max(y, end_y) + h + h // 3))
+                    return read_underlined_entry(crop)
     return None
+
+
+def read_underlined_entry(crop):
+    gray = np.asarray(crop.convert("L"))
+    _, ink = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    width = ink.shape[1]
+    lines = cv2.HoughLinesP(ink, 1, np.pi / 360, max(12, width // 7),
+                            minLineLength=max(10, width // 2), maxLineGap=max(2, width // 50))
+    if lines is not None:
+        for x1, y1, x2, y2 in lines.reshape(-1, 4):
+            if abs(y2 - y1) < 0.1 * abs(x2 - x1):
+                cv2.line(ink, (x1, y1), (x2, y2), 0, max(2, ink.shape[0] // 15))
+    if not np.any(ink):
+        return ""
+    text = pytesseract.image_to_string(255 - ink, config="--psm 7").strip()
+    # The label's colon can fall just outside its detected word box.
+    return text.lstrip(":").strip() if any(char.isalnum() for char in text) else ""
 
 def _order_corners(pts: np.ndarray) -> np.ndarray:
     """Order 4 points as top-left, top-right, bottom-right, bottom-left."""
@@ -523,10 +556,10 @@ def run_autofill_pipeline(page_image, full_ocr_text: str) -> dict:
     # method produced which field.
     cleaned_fields.update(extract_checkbox_groups(image, template))
 
-    # --- New Extraction Logic ---
-    org_name = extract_organization(full_ocr_text)
-    if org_name:
-        cleaned_fields["organization_name"] = {"value": org_name}
+    if "organization_name" in template.zones:
+        entry = read_organization_entry(page_image)
+        if entry is not None:
+            cleaned_fields["organization_name"] = clean_field(entry, template.zones["organization_name"])
         
     academic_year = calculate_academic_year(full_ocr_text)
     if academic_year:
